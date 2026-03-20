@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title if title else 'Ticket Dashboard' }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }
+        a { color: #93c5fd; text-decoration: none; }
+        .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:24px; }
+        .card { background:#1f2937; border-radius:12px; padding:16px; }
+        table { width:100%; border-collapse: collapse; background:#1f2937; border-radius:12px; overflow:hidden; }
+        th, td { padding:12px; border-bottom:1px solid #374151; text-align:left; }
+        th { background:#111827; }
+        .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#374151; }
+        .open { background:#065f46; }
+        .closed { background:#92400e; }
+        .deleted { background:#7f1d1d; }
+        .filters a { margin-right:12px; }
+        .login-box { max-width:420px; margin:80px auto; background:#1f2937; padding:24px; border-radius:12px; }
+        input { width:100%; padding:10px; margin:8px 0 16px; border-radius:8px; border:1px solid #4b5563; background:#111827; color:#f3f4f6; }
+        button { padding:10px 16px; border:none; border-radius:8px; background:#2563eb; color:white; cursor:pointer; }
+        .grid { display:grid; grid-template-columns: 220px 1fr; gap:16px; }
+        .label { color:#9ca3af; font-size:0.9rem; }
+        .value { font-size:1rem; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div><strong>Discord Ticket Dashboard</strong></div>
+        <div>{% if user %}Signed in as {{ user }} · <a href="/logout">Logout</a>{% endif %}</div>
+    </div>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Overview</h1>
+<div class="cards">
+    <div class="card"><div class="label">Total</div><div class="value">{{ stats.total }}</div></div>
+    <div class="card"><div class="label">Open</div><div class="value">{{ stats.open }}</div></div>
+    <div class="card"><div class="label">Closed</div><div class="value">{{ stats.closed }}</div></div>
+    <div class="card"><div class="label">Deleted</div><div class="value">{{ stats.deleted }}</div></div>
+</div>
+<div class="filters">
+    <a href="/">All</a>
+    <a href="/?status_filter=open">Open</a>
+    <a href="/?status_filter=closed">Closed</a>
+    <a href="/?status_filter=deleted">Deleted</a>
+</div>
+<br>
+<table>
+    <thead>
+        <tr>
+            <th>Thread ID</th>
+            <th>Status</th>
+            <th>Server</th>
+            <th>Opened By</th>
+            <th>Created</th>
+            <th>Details</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for ticket in tickets %}
+        <tr>
+            <td>{{ ticket.thread_id }}</td>
+            <td><span class="pill {{ ticket.status }}">{{ ticket.status }}</span></td>
+            <td>{{ ticket.server_label }}</td>
+            <td>{{ ticket.opener_name }}</td>
+            <td>{{ ticket.created_at }}</td>
+            <td><a href="/tickets/{{ ticket.thread_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
