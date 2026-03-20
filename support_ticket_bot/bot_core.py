@@ -14,9 +14,8 @@ class SupportTicketBot(commands.Bot):
     def __init__(self, settings: BotSettings):
         intents = discord.Intents.default()
         intents.guilds = True
-        intents.members = True
         intents.messages = True
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.db = TicketDatabase(settings)
 
@@ -35,8 +34,16 @@ class SupportTicketBot(commands.Bot):
         print(f"Logged in as {self.user} ({self.user.id})")
 
 
+async def _run_bot(settings: BotSettings) -> None:
+    bot = SupportTicketBot(settings)
+    try:
+        await bot.start(settings.token)
+    finally:
+        if not bot.is_closed():
+            await bot.close()
+
+
 def main() -> None:
     setup_logging()
     settings = load_settings()
-    bot = SupportTicketBot(settings)
-    asyncio.run(bot.start(settings.token))
+    asyncio.run(_run_bot(settings))
