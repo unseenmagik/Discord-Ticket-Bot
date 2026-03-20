@@ -35,7 +35,7 @@ class SupportTicketBot(commands.Bot):
         await super().close()
 
     async def on_ready(self) -> None:
-        print(f"Logged in as {self.user} ({self.user.id})")
+        log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
 
 
 async def _run_bot(settings: BotSettings) -> None:

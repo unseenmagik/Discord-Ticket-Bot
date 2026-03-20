@@ -42,6 +42,9 @@ class TicketsCog(commands.Cog):
             timestamp=datetime.now(timezone.utc),
         )
 
+    async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float = 5.0) -> None:
+        await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
+
     async def _resolve_thread(self, thread_id: int) -> discord.Thread | None:
         cached = self.bot.get_channel(thread_id)
         if isinstance(cached, discord.Thread):
@@ -89,13 +92,13 @@ class TicketsCog(commands.Cog):
 
     async def handle_ticket_creation(self, interaction: discord.Interaction, chosen_label: str) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message("This can only be used inside a server.", ephemeral=True)
+            await self._reply(interaction, "This can only be used inside a server.")
             return
         settings = self.bot.settings
         channel_id = settings.server_targets[chosen_label]
         target_channel = interaction.guild.get_channel(channel_id)
         if target_channel is None or not isinstance(target_channel, discord.TextChannel):
-            await interaction.response.send_message("The configured destination channel is invalid.", ephemeral=True)
+            await self._reply(interaction, "The configured destination channel is invalid.")
             return
 
         if settings.prevent_duplicate_open_tickets:
@@ -103,9 +106,9 @@ class TicketsCog(commands.Cog):
             if existing:
                 thread = interaction.guild.get_thread(existing["thread_id"]) or self.bot.get_channel(existing["thread_id"])
                 mention = thread.mention if isinstance(thread, discord.Thread) else f"`{existing['thread_id']}`"
-                await interaction.response.send_message(
+                await self._reply(
+                    interaction,
                     f"You already have an open ticket for **{chosen_label}**: {mention}",
-                    ephemeral=True,
                 )
                 return
 
@@ -122,10 +125,10 @@ class TicketsCog(commands.Cog):
                 reason=f"Support ticket opened by {interaction.user} for {chosen_label}",
             )
         except discord.Forbidden:
-            await interaction.response.send_message("I do not have permission to create threads there.", ephemeral=True)
+            await self._reply(interaction, "I do not have permission to create threads there.")
             return
         except discord.HTTPException as exc:
-            await interaction.response.send_message(f"Failed to create ticket thread: {exc}", ephemeral=True)
+            await self._reply(interaction, f"Failed to create ticket thread: {exc}")
             return
 
         try:
@@ -158,7 +161,15 @@ class TicketsCog(commands.Cog):
         close_view = ThreadCloseView(self.bot, thread.id)
         self.bot.add_view(close_view)
         await thread.send(content=mentions or None, embed=embed, view=close_view)
-        await interaction.response.send_message(f"Your ticket has been created: {thread.mention}", ephemeral=True)
+        log.info(
+            "Ticket opened thread_id=%s guild_id=%s opener_id=%s server_label=%s target_channel_id=%s",
+            thread.id,
+            interaction.guild.id,
+            interaction.user.id,
+            chosen_label,
+            target_channel.id,
+        )
+        await self._reply(interaction, f"Your ticket has been created: {thread.mention}")
 
     async def _send_transcript_log(
         self,
@@ -206,21 +217,21 @@ class TicketsCog(commands.Cog):
     async def handle_close_from_thread(self, interaction: discord.Interaction, thread_id: int) -> None:
         thread = await self._resolve_thread(thread_id)
         if thread is None:
-            await interaction.response.send_message("Could not find that ticket thread.", ephemeral=True)
+            await self._reply(interaction, "Could not find that ticket thread.")
             return
 
         ticket = await self.bot.db.get_ticket(thread.id)
         if ticket is None:
-            await interaction.response.send_message("That thread is not tracked as a ticket.", ephemeral=True)
+            await self._reply(interaction, "That thread is not tracked as a ticket.")
             return
         if ticket["status"] == "closed":
-            await interaction.response.send_message("This ticket is already closed.", ephemeral=True)
+            await self._reply(interaction, "This ticket is already closed.")
             return
         if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
-            await interaction.response.send_message("You do not have permission to close this ticket.", ephemeral=True)
+            await self._reply(interaction, "You do not have permission to close this ticket.")
             return
 
-        await interaction.response.send_message("Closing ticket...", ephemeral=True)
+        await self._reply(interaction, "Closing ticket...")
         log_message_id, transcript_message_url = await self._send_transcript_log(thread, interaction.user, ticket)
         await self.bot.db.close_ticket(
             thread_id=thread.id,
@@ -234,24 +245,31 @@ class TicketsCog(commands.Cog):
             await thread.send(f"Ticket closed by {interaction.user.mention}.")
         except discord.HTTPException:
             pass
+        log.info(
+            "Ticket closed thread_id=%s guild_id=%s closed_by_id=%s log_message_id=%s",
+            thread.id,
+            thread.guild.id,
+            interaction.user.id,
+            log_message_id,
+        )
         await thread.edit(archived=True, locked=True, reason=f"Ticket closed by {interaction.user}")
 
     async def handle_reopen_from_log(self, interaction: discord.Interaction, thread_id: int) -> None:
         thread = await self._resolve_thread(thread_id)
         if thread is None:
-            await interaction.response.send_message("Could not find that ticket thread.", ephemeral=True)
+            await self._reply(interaction, "Could not find that ticket thread.")
             return
         ticket = await self.bot.db.get_ticket(thread.id)
         if ticket is None:
-            await interaction.response.send_message("That thread is not tracked as a ticket.", ephemeral=True)
+            await self._reply(interaction, "That thread is not tracked as a ticket.")
             return
         if ticket["status"] != "closed":
-            await interaction.response.send_message("This ticket is not closed.", ephemeral=True)
+            await self._reply(interaction, "This ticket is not closed.")
             return
         if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=True):
-            await interaction.response.send_message("You do not have permission to reopen this ticket.", ephemeral=True)
+            await self._reply(interaction, "You do not have permission to reopen this ticket.")
             return
-        await interaction.response.send_message("Reopening ticket...", ephemeral=True)
+        await self._reply(interaction, "Reopening ticket...")
         await thread.edit(archived=False, locked=False, reason=f"Ticket reopened by {interaction.user}")
         try:
             await thread.send(f"Ticket reopened by {interaction.user.mention}.")
@@ -263,17 +281,23 @@ class TicketsCog(commands.Cog):
             reopened_by_id=interaction.user.id,
             reopened_by_name=str(interaction.user),
         )
+        log.info(
+            "Ticket reopened thread_id=%s guild_id=%s reopened_by_id=%s",
+            thread.id,
+            thread.guild.id,
+            interaction.user.id,
+        )
 
     async def handle_delete_from_log(self, interaction: discord.Interaction, thread_id: int) -> None:
         thread = await self._resolve_thread(thread_id)
         ticket = await self.bot.db.get_ticket(thread_id)
         if ticket is None:
-            await interaction.response.send_message("That thread is not tracked as a ticket.", ephemeral=True)
+            await self._reply(interaction, "That thread is not tracked as a ticket.")
             return
         if thread and not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=True):
-            await interaction.response.send_message("You do not have permission to delete this ticket.", ephemeral=True)
+            await self._reply(interaction, "You do not have permission to delete this ticket.")
             return
-        await interaction.response.send_message("Deleting ticket thread...", ephemeral=True)
+        await self._reply(interaction, "Deleting ticket thread...")
         if thread is not None:
             try:
                 await thread.delete()
@@ -284,6 +308,12 @@ class TicketsCog(commands.Cog):
             deleted_at=utc_now_iso(),
             deleted_by_id=interaction.user.id,
             deleted_by_name=str(interaction.user),
+        )
+        log.info(
+            "Ticket deleted thread_id=%s guild_id=%s deleted_by_id=%s",
+            thread_id,
+            interaction.guild.id if interaction.guild else "unknown",
+            interaction.user.id,
         )
 
     @tasks.loop(hours=1)
@@ -322,11 +352,11 @@ class TicketsCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def setup_tickets(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+            await self._reply(interaction, "This command must be used in a server.")
             return
         channel = interaction.guild.get_channel(self.bot.settings.panel_channel_id)
         if channel is None or not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("The configured panel channel is invalid.", ephemeral=True)
+            await self._reply(interaction, "The configured panel channel is invalid.")
             return
         embed = self._embed(
             "Support Tickets",
@@ -337,17 +367,17 @@ class TicketsCog(commands.Cog):
             await message.pin(reason="Ticket panel")
         except discord.HTTPException:
             pass
-        await interaction.response.send_message(f"Ticket panel posted in {channel.mention}.", ephemeral=True)
+        await self._reply(interaction, f"Ticket panel posted in {channel.mention}.")
 
     @app_commands.command(name="ticket_panel", description="Post another ticket panel")
     @app_commands.default_permissions(administrator=True)
     async def ticket_panel(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+            await self._reply(interaction, "This command must be used in a server.")
             return
         channel = interaction.guild.get_channel(self.bot.settings.panel_channel_id)
         if channel is None or not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("The configured panel channel is invalid.", ephemeral=True)
+            await self._reply(interaction, "The configured panel channel is invalid.")
             return
         embed = self._embed(
             "Support Tickets",
@@ -358,30 +388,30 @@ class TicketsCog(commands.Cog):
             await message.pin(reason="Ticket panel")
         except discord.HTTPException:
             pass
-        await interaction.response.send_message(f"Ticket panel posted in {channel.mention}.", ephemeral=True)
+        await self._reply(interaction, f"Ticket panel posted in {channel.mention}.")
 
     @app_commands.command(name="close_ticket", description="Close the current ticket thread")
     async def close_ticket(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.channel, discord.Thread):
-            await interaction.response.send_message("This command can only be used inside a ticket thread.", ephemeral=True)
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
             return
         await self.handle_close_from_thread(interaction, interaction.channel.id)
 
     @app_commands.command(name="reopen_ticket", description="Reopen the current ticket thread")
     async def reopen_ticket(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.channel, discord.Thread):
-            await interaction.response.send_message("This command can only be used inside a ticket thread.", ephemeral=True)
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
             return
         await self.handle_reopen_from_log(interaction, interaction.channel.id)
 
     @app_commands.command(name="ticket_info", description="Show metadata for the current ticket")
     async def ticket_info(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.channel, discord.Thread):
-            await interaction.response.send_message("This command can only be used inside a ticket thread.", ephemeral=True)
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
             return
         ticket = await self.bot.db.get_ticket(interaction.channel.id)
         if ticket is None:
-            await interaction.response.send_message("This thread is not tracked as a ticket.", ephemeral=True)
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
             return
         embed = self._embed(
             "Ticket Info",

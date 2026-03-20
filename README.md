@@ -147,6 +147,16 @@ pm2 restart discord-ticket-bot
 pm2 restart discord-ticket-dashboard
 ```
 
+## Logging
+
+The bot writes logs to both the console and:
+
+```text
+logs/discord-ticket-bot.log
+```
+
+Ticket lifecycle events such as open, close, reopen, and delete are logged there.
+
 ## Slash commands
 
 - `/setup_tickets`
