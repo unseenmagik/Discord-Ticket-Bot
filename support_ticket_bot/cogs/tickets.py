@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from support_ticket_bot.transcript import generate_transcripts
+from support_ticket_bot.transcript import generate_transcripts, store_html_transcript
 from support_ticket_bot.utils import clean_slug, utc_now_iso
 from support_ticket_bot.views import TicketLogControlsView, TicketPanelView, ThreadCloseView
 
@@ -41,6 +41,22 @@ class TicketsCog(commands.Cog):
             color=self.bot.settings.embed_color,
             timestamp=datetime.now(timezone.utc),
         )
+
+    async def _resolve_thread(self, thread_id: int) -> discord.Thread | None:
+        cached = self.bot.get_channel(thread_id)
+        if isinstance(cached, discord.Thread):
+            return cached
+
+        for guild in self.bot.guilds:
+            thread = guild.get_thread(thread_id)
+            if thread is not None:
+                return thread
+
+        try:
+            fetched = await self.bot.fetch_channel(thread_id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            return None
+        return fetched if isinstance(fetched, discord.Thread) else None
 
     async def _user_can_manage_ticket(
         self,
@@ -179,13 +195,16 @@ class TicketsCog(commands.Cog):
         log_message = await log_channel.send(embed=embed, files=files, view=view)
         await self.bot.db.set_log_message_id(thread.id, log_message.id)
         self.bot.add_view(view, message_id=log_message.id)
-        return log_message.id, log_message.jump_url
+        transcript_url = None
+        if bundle.transcript_html is not None:
+            store_html_transcript(thread.id, bundle.transcript_html)
+            transcript_url = self.bot.settings.dashboard_base_url.rstrip("/") + f"/tickets/{thread.id}/transcript"
+        elif log_message.jump_url:
+            transcript_url = log_message.jump_url
+        return log_message.id, transcript_url
 
     async def handle_close_from_thread(self, interaction: discord.Interaction, thread_id: int) -> None:
-        thread = interaction.guild.get_thread(thread_id) if interaction.guild else None
-        if thread is None:
-            maybe_thread = self.bot.get_channel(thread_id)
-            thread = maybe_thread if isinstance(maybe_thread, discord.Thread) else None
+        thread = await self._resolve_thread(thread_id)
         if thread is None:
             await interaction.response.send_message("Could not find that ticket thread.", ephemeral=True)
             return
@@ -218,10 +237,7 @@ class TicketsCog(commands.Cog):
         await thread.edit(archived=True, locked=True, reason=f"Ticket closed by {interaction.user}")
 
     async def handle_reopen_from_log(self, interaction: discord.Interaction, thread_id: int) -> None:
-        thread = interaction.guild.get_thread(thread_id) if interaction.guild else None
-        if thread is None:
-            maybe_thread = self.bot.get_channel(thread_id)
-            thread = maybe_thread if isinstance(maybe_thread, discord.Thread) else None
+        thread = await self._resolve_thread(thread_id)
         if thread is None:
             await interaction.response.send_message("Could not find that ticket thread.", ephemeral=True)
             return
@@ -249,10 +265,7 @@ class TicketsCog(commands.Cog):
         )
 
     async def handle_delete_from_log(self, interaction: discord.Interaction, thread_id: int) -> None:
-        thread = interaction.guild.get_thread(thread_id) if interaction.guild else None
-        if thread is None:
-            maybe_thread = self.bot.get_channel(thread_id)
-            thread = maybe_thread if isinstance(maybe_thread, discord.Thread) else None
+        thread = await self._resolve_thread(thread_id)
         ticket = await self.bot.db.get_ticket(thread_id)
         if ticket is None:
             await interaction.response.send_message("That thread is not tracked as a ticket.", ephemeral=True)
@@ -287,11 +300,7 @@ class TicketsCog(commands.Cog):
                 continue
             if closed_dt > cutoff:
                 continue
-            guild = self.bot.get_guild(ticket["guild_id"])
-            thread = guild.get_thread(ticket["thread_id"]) if guild else None
-            if thread is None:
-                maybe_channel = self.bot.get_channel(ticket["thread_id"])
-                thread = maybe_channel if isinstance(maybe_channel, discord.Thread) else None
+            thread = await self._resolve_thread(ticket["thread_id"])
             if thread is not None:
                 try:
                     await thread.delete(reason="Closed ticket expired")

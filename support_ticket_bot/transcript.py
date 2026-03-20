@@ -3,16 +3,21 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from datetime import timezone
+from pathlib import Path
 
 import discord
 
 from .utils import html_escape
+
+TRANSCRIPTS_DIR = Path(__file__).resolve().parent / "dashboard" / "transcripts"
 
 
 @dataclass(slots=True)
 class TranscriptBundle:
     txt_file: discord.File | None
     html_file: discord.File | None
+    transcript_text: str
+    transcript_html: str | None
 
 
 def _message_block(message: discord.Message) -> str:
@@ -72,6 +77,7 @@ async def generate_transcripts(
 
     txt_file = None
     html_file = None
+    transcript_html = None
 
     if include_txt:
         txt_buffer = io.BytesIO(transcript_text.encode("utf-8"))
@@ -110,7 +116,20 @@ a {{ color: #7cb7ff; }}
 </body>
 </html>
 """
+        transcript_html = html_doc
         html_buffer = io.BytesIO(html_doc.encode("utf-8"))
         html_file = discord.File(html_buffer, filename=f"{thread.name}.html")
 
-    return TranscriptBundle(txt_file=txt_file, html_file=html_file)
+    return TranscriptBundle(
+        txt_file=txt_file,
+        html_file=html_file,
+        transcript_text=transcript_text,
+        transcript_html=transcript_html,
+    )
+
+
+def store_html_transcript(thread_id: int, html_content: str) -> Path:
+    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    transcript_path = TRANSCRIPTS_DIR / f"{thread_id}.html"
+    transcript_path.write_text(html_content, encoding="utf-8")
+    return transcript_path

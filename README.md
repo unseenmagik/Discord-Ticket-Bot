@@ -195,7 +195,7 @@ Inside the WebUI you can:
 - View total, open, closed, and deleted ticket counts
 - Filter tickets by status
 - Open an individual ticket detail page by clicking `Open`
-- Follow the transcript link on a closed ticket to jump to the Discord log message with the attached transcript files
+- Open the saved HTML transcript for a closed ticket directly in your browser
 
 If your bot is running on a remote server, keep `host = 127.0.0.1` if you only want local access through a reverse proxy or SSH tunnel. If you want the dashboard to listen publicly, change `host` to `0.0.0.0` and secure it properly before exposing it to the internet.
 

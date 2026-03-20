@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from support_ticket_bot.config import BotSettings, load_settings
 from support_ticket_bot.db import DashboardDatabase
+from support_ticket_bot.transcript import TRANSCRIPTS_DIR
 from support_ticket_bot.utils import hash_password
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -96,5 +97,12 @@ def create_app() -> FastAPI:
                 "user": user,
             },
         )
+
+    @app.get("/tickets/{thread_id}/transcript", response_class=HTMLResponse)
+    async def ticket_transcript(thread_id: int, request: Request, user: str = Depends(require_login)):
+        transcript_path = TRANSCRIPTS_DIR / f"{thread_id}.html"
+        if not transcript_path.exists():
+            raise HTTPException(status_code=404, detail="Transcript not found")
+        return HTMLResponse(content=transcript_path.read_text(encoding="utf-8"))
 
     return app
