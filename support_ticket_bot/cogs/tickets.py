@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from support_ticket_bot.transcript import generate_transcripts, store_html_transcript
-from support_ticket_bot.utils import clean_slug, utc_now_iso
+from support_ticket_bot.utils import clean_slug, render_template, utc_now_iso
 from support_ticket_bot.views import TicketLogControlsView, TicketPanelView, ThreadCloseView, ThreadReopenView
 
 log = logging.getLogger(__name__)
@@ -139,6 +139,9 @@ class TicketsCog(commands.Cog):
             return None
         return fetched if isinstance(fetched, discord.Thread) else None
 
+    async def _get_message_templates(self) -> dict[str, str]:
+        return await self.bot.db.get_message_templates()
+
     async def _user_can_manage_ticket(
         self,
         interaction: discord.Interaction,
@@ -226,13 +229,23 @@ class TicketsCog(commands.Cog):
         )
 
         mentions = " ".join(f"<@&{role_id}>" for role_id in settings.support_role_ids)
+        templates = await self._get_message_templates()
         embed = self._embed(
-            "Ticket Created",
-            (
-                f"**Server:** {chosen_label}\n"
-                f"**Opened by:** {interaction.user.mention}\n"
-                f"**Ticket ID:** `{thread.id}`\n\n"
-                "Use the button below to close this ticket when it is resolved."
+            render_template(
+                templates["thread_embed_title"],
+                guild_name=interaction.guild.name,
+                server_label=chosen_label,
+                user_mention=interaction.user.mention,
+                user_name=interaction.user.display_name,
+                thread_id=thread.id,
+            ),
+            render_template(
+                templates["thread_embed_description"],
+                guild_name=interaction.guild.name,
+                server_label=chosen_label,
+                user_mention=interaction.user.mention,
+                user_name=interaction.user.display_name,
+                thread_id=thread.id,
             ),
         )
 
@@ -440,9 +453,18 @@ class TicketsCog(commands.Cog):
         if channel is None or not isinstance(channel, discord.TextChannel):
             await self._reply(interaction, "The configured panel channel is invalid.")
             return
+        templates = await self._get_message_templates()
         embed = self._embed(
-            "Support Tickets",
-            "Press **Create Ticket** below, then choose which server the ticket is for.",
+            render_template(
+                templates["panel_title"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
+            render_template(
+                templates["panel_description"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
         )
         message = await channel.send(embed=embed, view=TicketPanelView(self.bot))
         try:
@@ -461,9 +483,18 @@ class TicketsCog(commands.Cog):
         if channel is None or not isinstance(channel, discord.TextChannel):
             await self._reply(interaction, "The configured panel channel is invalid.")
             return
+        templates = await self._get_message_templates()
         embed = self._embed(
-            "Support Tickets",
-            "Press **Create Ticket** below, then choose which server the ticket is for.",
+            render_template(
+                templates["panel_title"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
+            render_template(
+                templates["panel_description"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
         )
         message = await channel.send(embed=embed, view=TicketPanelView(self.bot))
         try:

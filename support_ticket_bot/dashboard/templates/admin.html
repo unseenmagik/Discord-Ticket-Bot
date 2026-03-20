@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Admin</h1>
+<p class="muted">Configure the ticket panel message and the first bot message sent inside each ticket thread.</p>
+
+{% if saved %}
+<div class="notice">Message templates saved. New panels and new tickets will use the updated text.</div>
+{% endif %}
+
+<div class="card">
+    <form method="post" action="/admin/messages">
+        <h2>Ticket Panel</h2>
+        <label for="panel_title">Panel title</label>
+        <input id="panel_title" name="panel_title" type="text" value="{{ templates.panel_title }}" required>
+
+        <label for="panel_description">Panel description</label>
+        <textarea id="panel_description" name="panel_description" required>{{ templates.panel_description }}</textarea>
+        <div class="help">Available placeholders: <code>{guild_name}</code>, <code>{panel_channel_mention}</code></div>
+
+        <h2>Thread Welcome</h2>
+        <label for="thread_embed_title">Thread message title</label>
+        <input id="thread_embed_title" name="thread_embed_title" type="text" value="{{ templates.thread_embed_title }}" required>
+
+        <label for="thread_embed_description">Thread message description</label>
+        <textarea id="thread_embed_description" name="thread_embed_description" required>{{ templates.thread_embed_description }}</textarea>
+        <div class="help">Available placeholders: <code>{guild_name}</code>, <code>{server_label}</code>, <code>{user_mention}</code>, <code>{user_name}</code>, <code>{thread_id}</code></div>
+
+        <button type="submit">Save changes</button>
+    </form>
+</div>
+{% endblock %}

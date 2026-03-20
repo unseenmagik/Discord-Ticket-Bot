@@ -9,6 +9,8 @@
         body { font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }
         a { color: #93c5fd; text-decoration: none; }
         .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }
+        .topbar-left { display:flex; align-items:center; gap:18px; }
+        .topnav a { margin-right:14px; }
         .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
         .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:24px; }
         .card { background:#1f2937; border-radius:12px; padding:16px; }
@@ -22,15 +24,27 @@
         .filters a { margin-right:12px; }
         .login-box { max-width:420px; margin:80px auto; background:#1f2937; padding:24px; border-radius:12px; }
         input { width:100%; padding:10px; margin:8px 0 16px; border-radius:8px; border:1px solid #4b5563; background:#111827; color:#f3f4f6; }
+        textarea { width:100%; min-height:120px; padding:10px; margin:8px 0 16px; border-radius:8px; border:1px solid #4b5563; background:#111827; color:#f3f4f6; resize:vertical; }
         button { padding:10px 16px; border:none; border-radius:8px; background:#2563eb; color:white; cursor:pointer; }
         .grid { display:grid; grid-template-columns: 220px 1fr; gap:16px; }
         .label { color:#9ca3af; font-size:0.9rem; }
         .value { font-size:1rem; }
+        .notice { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#064e3b; color:#d1fae5; }
+        .muted { color:#9ca3af; }
+        .help { font-size:0.92rem; color:#9ca3af; margin-top:-8px; margin-bottom:16px; }
     </style>
 </head>
 <body>
     <div class="topbar">
-        <div><strong>Discord Ticket Dashboard</strong></div>
+        <div class="topbar-left">
+            <div><strong>Discord Ticket Dashboard</strong></div>
+            {% if user %}
+            <div class="topnav">
+                <a href="/">Dashboard</a>
+                <a href="/admin">Admin</a>
+            </div>
+            {% endif %}
+        </div>
         <div>{% if user %}Signed in as {{ user }} · <a href="/logout">Logout</a>{% endif %}</div>
     </div>
     <div class="container">

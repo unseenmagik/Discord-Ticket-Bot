@@ -207,6 +207,7 @@ Inside the WebUI you can:
 - Filter tickets by status
 - Open an individual ticket detail page by clicking `Open`
 - Open the saved HTML transcript for a closed ticket directly in your browser
+- Update the ticket panel and thread welcome message templates from the `Admin` page
 
 If your bot is running on a remote server, keep `host = 127.0.0.1` if you only want local access through a reverse proxy or SSH tunnel. If you want the dashboard to listen publicly, change `host` to `0.0.0.0` and secure it properly before exposing it to the internet.
 

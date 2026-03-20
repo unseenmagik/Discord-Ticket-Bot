@@ -6,6 +6,14 @@ import aiomysql
 import pymysql
 
 from .config import BotSettings
+from .utils import DEFAULT_MESSAGE_TEMPLATES
+
+APP_SETTINGS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key VARCHAR(100) PRIMARY KEY,
+    setting_value TEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
 
 
 class TicketDatabase:
@@ -27,6 +35,7 @@ class TicketDatabase:
             charset=self.settings.db_charset,
             autocommit=True,
         )
+        await self.execute(APP_SETTINGS_TABLE_SQL)
 
     async def close(self) -> None:
         if self.pool is not None:
@@ -176,6 +185,26 @@ class TicketDatabase:
             "SELECT * FROM tickets WHERE log_message_id IS NOT NULL AND status IN ('open', 'closed')"
         )
 
+    async def get_message_templates(self) -> dict[str, str]:
+        templates = DEFAULT_MESSAGE_TEMPLATES.copy()
+        rows = await self.fetchall("SELECT setting_key, setting_value FROM app_settings")
+        for row in rows:
+            key = row["setting_key"]
+            if key in templates:
+                templates[key] = row["setting_value"]
+        return templates
+
+    async def set_message_templates(self, templates: dict[str, str]) -> None:
+        for key, value in templates.items():
+            await self.execute(
+                """
+                INSERT INTO app_settings (setting_key, setting_value)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+                """,
+                (key, value),
+            )
+
 
 class DashboardDatabase:
     def __init__(self, settings: BotSettings):
@@ -192,6 +221,11 @@ class DashboardDatabase:
             cursorclass=pymysql.cursors.DictCursor,
             autocommit=True,
         )
+
+    def ensure_app_settings_table(self) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(APP_SETTINGS_TABLE_SQL)
 
     def get_stats(self) -> dict[str, int]:
         with self._connect() as conn:
@@ -229,3 +263,29 @@ class DashboardDatabase:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM tickets WHERE thread_id = %s", (thread_id,))
                 return cur.fetchone()
+
+    def get_message_templates(self) -> dict[str, str]:
+        templates = DEFAULT_MESSAGE_TEMPLATES.copy()
+        self.ensure_app_settings_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT setting_key, setting_value FROM app_settings")
+                for row in cur.fetchall():
+                    key = row["setting_key"]
+                    if key in templates:
+                        templates[key] = row["setting_value"]
+        return templates
+
+    def set_message_templates(self, templates: dict[str, str]) -> None:
+        self.ensure_app_settings_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for key, value in templates.items():
+                    cur.execute(
+                        """
+                        INSERT INTO app_settings (setting_key, setting_value)
+                        VALUES (%s, %s)
+                        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+                        """,
+                        (key, value),
+                    )
