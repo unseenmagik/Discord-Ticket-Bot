@@ -54,8 +54,8 @@ discord_ticket_bot_web_mysql/
 1. Clone the repository and enter the project folder:
 
 ```bash
-git clone <your-repo-url>
-cd <your-repo-folder>
+git clone https://github.com/unseenmagik/Discord-Ticket-Bot
+cd Discord-Ticket-Bot
 ```
 
 2. Create and activate a virtual environment:
