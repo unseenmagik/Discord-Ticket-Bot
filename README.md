@@ -21,7 +21,7 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 discord_ticket_bot_web_mysql/
 ├── bot.py
 ├── dashboard.py
-├── config.ini
+├── config.ini.example
 ├── requirements.txt
 ├── schema.sql
 ├── README.md
@@ -49,17 +49,35 @@ discord_ticket_bot_web_mysql/
             └── ticket_detail.html
 ```
 
-## Install
+## Installation and setup
+
+1. Clone the repository and enter the project folder:
 
 ```bash
-python -m venv .venv
+git clone <your-repo-url>
+cd <your-repo-folder>
+```
+
+2. Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+```
+
+3. Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Database setup
+4. Create your config file from the example:
 
-Create a MariaDB/MySQL database and user, then import the schema:
+```bash
+cp config.ini.example config.ini
+```
+
+5. Create a MariaDB/MySQL database and user:
 
 ```sql
 CREATE DATABASE discord_tickets CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -68,15 +86,13 @@ GRANT ALL PRIVILEGES ON discord_tickets.* TO 'ticketbot'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
 
-Then run:
+6. Import the schema:
 
 ```bash
 mysql -u ticketbot -p discord_tickets < schema.sql
 ```
 
-## Config
-
-Edit `config.ini` and set:
+7. Edit `config.ini` and set:
 
 - Discord token, guild ID, panel channel ID
 - Transcript channel ID
@@ -84,22 +100,48 @@ Edit `config.ini` and set:
 - Dashboard credentials in `[dashboard]`
 - Server label → channel ID mappings in `[servers]`
 
-## Run the bot
+## Start manually
+
+Start the bot:
 
 ```bash
+source .venv/bin/activate
 python bot.py
 ```
 
-## Run the dashboard
+Start the dashboard in a separate terminal:
 
 ```bash
+source .venv/bin/activate
 python dashboard.py
 ```
 
 Or directly with uvicorn:
 
 ```bash
+source .venv/bin/activate
 uvicorn support_ticket_bot.dashboard.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+## Start with PM2
+
+Run both processes with PM2 using the virtual environment's Python interpreter:
+
+```bash
+pm2 start bot.py --name discord-ticket-bot --interpreter .venv/bin/python
+pm2 start dashboard.py --name discord-ticket-dashboard --interpreter .venv/bin/python
+pm2 save
+pm2 startup
+```
+
+Useful PM2 commands:
+
+```bash
+pm2 status
+pm2 logs discord-ticket-bot
+pm2 logs discord-ticket-dashboard
+pm2 restart discord-ticket-bot
+pm2 restart discord-ticket-dashboard
 ```
 
 ## Slash commands
