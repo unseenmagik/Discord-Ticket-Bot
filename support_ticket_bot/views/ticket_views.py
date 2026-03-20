@@ -8,6 +8,10 @@ if TYPE_CHECKING:
     from support_ticket_bot.bot_core import SupportTicketBot
 
 
+def _delete_after(bot: "SupportTicketBot") -> float:
+    return bot.settings.interaction_delete_after_seconds
+
+
 class TicketPanelView(discord.ui.View):
     def __init__(self, bot: "SupportTicketBot"):
         super().__init__(timeout=None)
@@ -19,14 +23,14 @@ class TicketPanelView(discord.ui.View):
             await interaction.response.send_message(
                 "This ticket panel is not configured for this server.",
                 ephemeral=True,
-                delete_after=5,
+                delete_after=_delete_after(self.bot),
             )
             return
         await interaction.response.send_message(
             "Choose which server this ticket is for:",
             view=ServerSelectView(self.bot),
             ephemeral=True,
-            delete_after=5,
+            delete_after=_delete_after(self.bot),
         )
 
 
@@ -45,7 +49,11 @@ class ServerSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction) -> None:
         cog = self.bot.get_cog("TicketsCog")
         if cog is None:
-            await interaction.response.send_message("Ticket system is not ready yet.", ephemeral=True, delete_after=5)
+            await interaction.response.send_message(
+                "Ticket system is not ready yet.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
             return
         await cog.handle_ticket_creation(interaction, self.values[0])
 
@@ -73,9 +81,39 @@ class ThreadCloseView(discord.ui.View):
     async def _close_callback(self, interaction: discord.Interaction) -> None:
         cog = self.bot.get_cog("TicketsCog")
         if cog is None:
-            await interaction.response.send_message("Ticket system is unavailable.", ephemeral=True, delete_after=5)
+            await interaction.response.send_message(
+                "Ticket system is unavailable.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
             return
         await cog.handle_close_from_thread(interaction, self.thread_id)
+
+
+class ThreadReopenView(discord.ui.View):
+    def __init__(self, bot: "SupportTicketBot", thread_id: int):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.thread_id = thread_id
+        reopen_button = discord.ui.Button(
+            label="Reopen Ticket",
+            style=discord.ButtonStyle.success,
+            emoji="🔓",
+            custom_id=f"ticket:thread_reopen:{thread_id}",
+        )
+        reopen_button.callback = self._reopen_callback
+        self.add_item(reopen_button)
+
+    async def _reopen_callback(self, interaction: discord.Interaction) -> None:
+        cog = self.bot.get_cog("TicketsCog")
+        if cog is None:
+            await interaction.response.send_message(
+                "Ticket system is unavailable.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
+            return
+        await cog.handle_reopen_from_log(interaction, self.thread_id)
 
 
 class TicketLogControlsView(discord.ui.View):
@@ -104,13 +142,21 @@ class TicketLogControlsView(discord.ui.View):
     async def _reopen_callback(self, interaction: discord.Interaction) -> None:
         cog = self.bot.get_cog("TicketsCog")
         if cog is None:
-            await interaction.response.send_message("Ticket system is unavailable.", ephemeral=True, delete_after=5)
+            await interaction.response.send_message(
+                "Ticket system is unavailable.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
             return
         await cog.handle_reopen_from_log(interaction, self.thread_id)
 
     async def _delete_callback(self, interaction: discord.Interaction) -> None:
         cog = self.bot.get_cog("TicketsCog")
         if cog is None:
-            await interaction.response.send_message("Ticket system is unavailable.", ephemeral=True, delete_after=5)
+            await interaction.response.send_message(
+                "Ticket system is unavailable.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
             return
         await cog.handle_delete_from_log(interaction, self.thread_id)

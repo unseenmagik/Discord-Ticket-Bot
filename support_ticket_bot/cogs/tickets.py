@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 
 from support_ticket_bot.transcript import generate_transcripts, store_html_transcript
 from support_ticket_bot.utils import clean_slug, utc_now_iso
-from support_ticket_bot.views import TicketLogControlsView, TicketPanelView, ThreadCloseView
+from support_ticket_bot.views import TicketLogControlsView, TicketPanelView, ThreadCloseView, ThreadReopenView
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,14 @@ class TicketsCog(commands.Cog):
         self.bot.add_view(TicketPanelView(self.bot))
         for ticket in await self.bot.db.list_open_tickets():
             self.bot.add_view(ThreadCloseView(self.bot, ticket["thread_id"]))
+            thread = await self._resolve_thread(ticket["thread_id"])
+            if thread is not None:
+                await self._set_thread_controls(thread, closed=False)
+        for ticket in await self.bot.db.list_closed_tickets():
+            self.bot.add_view(ThreadReopenView(self.bot, ticket["thread_id"]))
+            thread = await self._resolve_thread(ticket["thread_id"])
+            if thread is not None:
+                await self._set_thread_controls(thread, closed=True)
         for ticket in await self.bot.db.list_tickets_with_log_controls():
             log_message_id = ticket.get("log_message_id")
             if log_message_id:
@@ -42,8 +50,36 @@ class TicketsCog(commands.Cog):
             timestamp=datetime.now(timezone.utc),
         )
 
-    async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float = 5.0) -> None:
+    async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
+        if delete_after is None:
+            delete_after = self.bot.settings.interaction_delete_after_seconds
         await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
+
+    async def _find_thread_control_message(self, thread: discord.Thread, thread_id: int) -> discord.Message | None:
+        close_custom_id = f"ticket:close:{thread_id}"
+        reopen_custom_id = f"ticket:thread_reopen:{thread_id}"
+
+        async for message in thread.history(limit=50, oldest_first=True):
+            if self.bot.user is None or message.author.id != self.bot.user.id:
+                continue
+            for row in message.components:
+                for component in row.children:
+                    custom_id = getattr(component, "custom_id", None)
+                    if custom_id in {close_custom_id, reopen_custom_id}:
+                        return message
+        return None
+
+    async def _set_thread_controls(self, thread: discord.Thread, *, closed: bool) -> None:
+        control_message = await self._find_thread_control_message(thread, thread.id)
+        if control_message is None:
+            return
+
+        view = ThreadReopenView(self.bot, thread.id) if closed else ThreadCloseView(self.bot, thread.id)
+        self.bot.add_view(view)
+        try:
+            await control_message.edit(view=view)
+        except discord.HTTPException:
+            log.exception("Failed to update thread controls for thread_id=%s", thread.id)
 
     async def _resolve_thread(self, thread_id: int) -> discord.Thread | None:
         cached = self.bot.get_channel(thread_id)
@@ -245,6 +281,7 @@ class TicketsCog(commands.Cog):
             await thread.send(f"Ticket closed by {interaction.user.mention}.")
         except discord.HTTPException:
             pass
+        await self._set_thread_controls(thread, closed=True)
         log.info(
             "Ticket closed thread_id=%s guild_id=%s closed_by_id=%s log_message_id=%s",
             thread.id,
@@ -275,6 +312,7 @@ class TicketsCog(commands.Cog):
             await thread.send(f"Ticket reopened by {interaction.user.mention}.")
         except discord.HTTPException:
             pass
+        await self._set_thread_controls(thread, closed=False)
         await self.bot.db.reopen_ticket(
             thread_id=thread.id,
             reopened_at=utc_now_iso(),

@@ -19,6 +19,7 @@ class BotSettings:
     allow_thread_owner_reopen: bool
     prevent_duplicate_open_tickets: bool
     close_requires_staff: bool
+    interaction_delete_after_seconds: float
     embed_color: int
     support_role_ids: list[int]
     save_txt_transcript: bool
@@ -74,6 +75,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         config, "tickets", "prevent_duplicate_open_tickets", True
     )
     close_requires_staff = _parse_bool(config, "tickets", "close_requires_staff", False)
+    interaction_delete_after_seconds = config.getfloat("tickets", "interaction_delete_after_seconds", fallback=30.0)
 
     embed_color_raw = config.get("tickets", "embed_color", fallback="0x5865F2")
     embed_color = int(embed_color_raw, 16) if embed_color_raw.lower().startswith("0x") else int(embed_color_raw)
@@ -118,6 +120,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         allow_thread_owner_reopen=allow_thread_owner_reopen,
         prevent_duplicate_open_tickets=prevent_duplicate_open_tickets,
         close_requires_staff=close_requires_staff,
+        interaction_delete_after_seconds=interaction_delete_after_seconds,
         embed_color=embed_color,
         support_role_ids=support_role_ids,
         save_txt_transcript=save_txt_transcript,

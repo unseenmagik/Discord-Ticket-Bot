@@ -12,6 +12,7 @@ allow_thread_owner_close = true
 allow_thread_owner_reopen = false
 prevent_duplicate_open_tickets = true
 close_requires_staff = false
+interaction_delete_after_seconds = 30
 embed_color = 0x5865F2
 
 [support]

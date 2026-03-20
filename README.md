@@ -99,6 +99,7 @@ mysql -u ticketbot -p discord_tickets < schema.sql
 - Transcript channel ID
 - MariaDB/MySQL connection details in `[database]`, using the same database name, username, and password you created in step 5
 - Dashboard credentials in `[dashboard]`
+- `interaction_delete_after_seconds` in `[tickets]` to control how long ephemeral action replies stay visible
 - Server label → channel ID mappings in `[servers]`
 
 If you enable `message_content_intent`, you must also enable the Message Content Intent for your bot in the Discord Developer Portal.

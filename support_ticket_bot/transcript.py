@@ -20,10 +20,74 @@ class TranscriptBundle:
     transcript_html: str | None
 
 
+def _message_content(message: discord.Message) -> str:
+    content = getattr(message, "clean_content", "") or message.content or ""
+    if content:
+        return content
+
+    system_content = getattr(message, "system_content", "") or ""
+    if system_content:
+        return system_content
+
+    reference = getattr(message, "reference", None)
+    resolved = getattr(reference, "resolved", None)
+    if isinstance(resolved, discord.Message):
+        referenced_content = getattr(resolved, "clean_content", "") or resolved.content or ""
+        if referenced_content:
+            return f"[Thread starter] {referenced_content}"
+
+    return ""
+
+
+def _embed_text(embed: discord.Embed) -> str:
+    parts: list[str] = []
+
+    if embed.title:
+        parts.append(f"Title: {embed.title}")
+    if embed.description:
+        parts.append(f"Description: {embed.description}")
+    if embed.author and embed.author.name:
+        parts.append(f"Author: {embed.author.name}")
+    for field in embed.fields:
+        parts.append(f"{field.name}: {field.value}")
+    if embed.footer and embed.footer.text:
+        parts.append(f"Footer: {embed.footer.text}")
+
+    return "\n".join(parts)
+
+
+def _embed_html(embed: discord.Embed) -> str:
+    parts: list[str] = []
+
+    if embed.title:
+        parts.append(f"<div class='embed-title'>{html_escape(embed.title)}</div>")
+    if embed.description:
+        parts.append(f"<div class='embed-description'>{html_escape(embed.description)}</div>")
+    if embed.author and embed.author.name:
+        parts.append(f"<div class='embed-author'>Author: {html_escape(embed.author.name)}</div>")
+    if embed.fields:
+        field_items = []
+        for field in embed.fields:
+            field_items.append(
+                "<div class='embed-field'>"
+                f"<div class='embed-field-name'>{html_escape(field.name)}</div>"
+                f"<div class='embed-field-value'>{html_escape(field.value)}</div>"
+                "</div>"
+            )
+        parts.append("<div class='embed-fields'>" + "".join(field_items) + "</div>")
+    if embed.footer and embed.footer.text:
+        parts.append(f"<div class='embed-footer'>{html_escape(embed.footer.text)}</div>")
+
+    if not parts:
+        parts.append("<div class='embed-note'>Embed attached</div>")
+
+    return "<div class='embed-block'>" + "".join(parts) + "</div>"
+
+
 def _message_block(message: discord.Message) -> str:
     created = message.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     author = html_escape(str(message.author))
-    content = html_escape(message.content or "")
+    content = html_escape(_message_content(message))
     avatar = message.author.display_avatar.url
 
     attachment_html = ""
@@ -35,7 +99,7 @@ def _message_block(message: discord.Message) -> str:
             items.append(f'<li><a href="{safe_url}" target="_blank">{safe_name}</a></li>')
         attachment_html = "<div class='attachments'><strong>Attachments</strong><ul>" + "".join(items) + "</ul></div>"
 
-    embed_note = "<div class='embed-note'>Embed attached</div>" if message.embeds else ""
+    embed_html = "".join(_embed_html(embed) for embed in message.embeds)
 
     return f"""
     <div class='message'>
@@ -47,7 +111,7 @@ def _message_block(message: discord.Message) -> str:
             </div>
             <pre class='content'>{content or '[no text content]'}</pre>
             {attachment_html}
-            {embed_note}
+            {embed_html}
         </div>
     </div>
     """
@@ -64,12 +128,16 @@ async def generate_transcripts(
 
     async for message in thread.history(limit=None, oldest_first=True):
         created = message.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        content = message.content or ""
+        content = _message_content(message)
         if message.attachments:
             for att in message.attachments:
                 content += f" [Attachment: {att.url}]"
         if message.embeds:
-            content += " [Embed]"
+            embed_text = "\n".join(filter(None, (_embed_text(embed) for embed in message.embeds)))
+            if embed_text:
+                content = f"{content}\n{embed_text}".strip()
+            else:
+                content += " [Embed]"
         lines.append(f"[{created}] {message.author}: {content}")
         html_messages.append(_message_block(message))
 
@@ -100,6 +168,13 @@ body {{ font-family: Arial, sans-serif; background: #1e1f22; color: #f2f3f5; mar
 .time {{ color: #949ba4; font-size: 0.9rem; }}
 .content {{ white-space: pre-wrap; word-wrap: break-word; margin: 0; font-family: inherit; }}
 a {{ color: #7cb7ff; }}
+.embed-block {{ margin-top: 10px; border-left: 4px solid #5865f2; background: #23272f; padding: 10px 12px; border-radius: 8px; }}
+.embed-title {{ font-weight: 700; margin-bottom: 6px; }}
+.embed-description {{ white-space: pre-wrap; margin-bottom: 8px; }}
+.embed-author, .embed-footer {{ color: #c9d1d9; font-size: 0.95rem; margin-top: 6px; }}
+.embed-fields {{ display: grid; gap: 8px; margin-top: 8px; }}
+.embed-field-name {{ font-weight: 700; margin-bottom: 2px; }}
+.embed-field-value {{ white-space: pre-wrap; }}
 .embed-note {{ margin-top: 8px; color: #f0b232; }}
 </style>
 </head>
