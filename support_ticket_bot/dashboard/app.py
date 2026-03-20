@@ -38,6 +38,10 @@ def create_app() -> FastAPI:
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return RedirectResponse(url="/static/favicon.svg", status_code=307)
+
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
         return TEMPLATES.TemplateResponse("login.html", {"request": request, "error": None})
