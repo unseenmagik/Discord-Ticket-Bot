@@ -8,6 +8,7 @@ from pathlib import Path
 @dataclass(slots=True)
 class BotSettings:
     token: str
+    message_content_intent: bool
     guild_id: int
     panel_channel_id: int
     transcript_channel_id: int
@@ -54,6 +55,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
     config.read(path, encoding="utf-8")
 
     token = config.get("discord", "token")
+    message_content_intent = _parse_bool(config, "discord", "message_content_intent", False)
     guild_id = config.getint("discord", "guild_id")
     panel_channel_id = config.getint("discord", "panel_channel_id")
 
@@ -105,6 +107,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
 
     return BotSettings(
         token=token,
+        message_content_intent=message_content_intent,
         guild_id=guild_id,
         panel_channel_id=panel_channel_id,
         transcript_channel_id=transcript_channel_id,

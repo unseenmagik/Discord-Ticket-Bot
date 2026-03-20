@@ -95,10 +95,13 @@ mysql -u ticketbot -p discord_tickets < schema.sql
 7. Edit `config.ini` and set:
 
 - Discord token, guild ID, panel channel ID
+- `message_content_intent = true` if you want ticket transcripts to include the actual message text
 - Transcript channel ID
 - MariaDB/MySQL connection details in `[database]`, using the same database name, username, and password you created in step 5
 - Dashboard credentials in `[dashboard]`
 - Server label → channel ID mappings in `[servers]`
+
+If you enable `message_content_intent`, you must also enable the Message Content Intent for your bot in the Discord Developer Portal.
 
 ## Start manually
 
@@ -164,10 +167,41 @@ pm2 restart discord-ticket-dashboard
 - Attach Files
 - Manage Messages
 
+## WebUI
+
+The dashboard is a web UI for viewing ticket stats and browsing saved tickets.
+
+By default, it runs on:
+
+```text
+http://127.0.0.1:8000
+```
+
+You can change this in the `[dashboard]` section of `config.ini`:
+
+- `host` sets the bind address
+- `port` sets the web port
+- `username` and `password` are the login credentials
+- `base_url` should match the public URL you want the dashboard to use in ticket links
+
+To access the WebUI:
+
+1. Start the dashboard with `python dashboard.py` or run it with PM2
+2. Open your browser and go to `http://127.0.0.1:8000` or your configured `base_url`
+3. Log in with the `username` and `password` from the `[dashboard]` section in `config.ini`
+
+Inside the WebUI you can:
+
+- View total, open, closed, and deleted ticket counts
+- Filter tickets by status
+- Open an individual ticket detail page by clicking `Open`
+- Follow the transcript link on a closed ticket to jump to the Discord log message with the attached transcript files
+
+If your bot is running on a remote server, keep `host = 127.0.0.1` if you only want local access through a reverse proxy or SSH tunnel. If you want the dashboard to listen publicly, change `host` to `0.0.0.0` and secure it properly before exposing it to the internet.
+
 ## Dashboard notes
 
-The dashboard uses FastAPI with an app lifespan pattern for startup/shutdown management. FastAPI recommends lifespan for startup/shutdown logic, and `APIRouter` is the standard way to structure larger apps. citeturn777799search10turn777799search6
-
-The bot uses persistent Discord component views, explicit `custom_id`s, and thread creation from a seed message in the destination channel. Public thread state like archive/lock is supported by `discord.py`. citeturn777799search0
-
-The database layer uses an async MariaDB/MySQL connection pool with `aiomysql.create_pool(...)`, which is the documented pattern for pooled async access. citeturn777799search1turn777799search11
+- The dashboard uses FastAPI and server-rendered templates for the login page, overview page, and individual ticket detail pages.
+- Closed ticket log messages can link back to the dashboard using the `base_url` configured in `[dashboard]`.
+- The bot stores ticket data in MariaDB/MySQL, and the dashboard reads from the same database to display ticket history and statistics.
+- Full transcript message text requires the Discord Message Content Intent to be enabled both in `config.ini` and in the Discord Developer Portal.

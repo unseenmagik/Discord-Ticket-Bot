@@ -144,13 +144,18 @@ class TicketsCog(commands.Cog):
         await thread.send(content=mentions or None, embed=embed, view=close_view)
         await interaction.response.send_message(f"Your ticket has been created: {thread.mention}", ephemeral=True)
 
-    async def _send_transcript_log(self, thread: discord.Thread, closed_by: discord.abc.User, ticket: dict) -> int | None:
+    async def _send_transcript_log(
+        self,
+        thread: discord.Thread,
+        closed_by: discord.abc.User,
+        ticket: dict,
+    ) -> tuple[int | None, str | None]:
         channel_id = self.bot.settings.transcript_channel_id
         if not channel_id:
-            return None
+            return None, None
         log_channel = thread.guild.get_channel(channel_id)
         if log_channel is None or not isinstance(log_channel, discord.TextChannel):
-            return None
+            return None, None
 
         bundle = await generate_transcripts(
             thread,
@@ -174,7 +179,7 @@ class TicketsCog(commands.Cog):
         log_message = await log_channel.send(embed=embed, files=files, view=view)
         await self.bot.db.set_log_message_id(thread.id, log_message.id)
         self.bot.add_view(view, message_id=log_message.id)
-        return log_message.id
+        return log_message.id, log_message.jump_url
 
     async def handle_close_from_thread(self, interaction: discord.Interaction, thread_id: int) -> None:
         thread = interaction.guild.get_thread(thread_id) if interaction.guild else None
@@ -197,13 +202,14 @@ class TicketsCog(commands.Cog):
             return
 
         await interaction.response.send_message("Closing ticket...", ephemeral=True)
-        log_message_id = await self._send_transcript_log(thread, interaction.user, ticket)
+        log_message_id, transcript_message_url = await self._send_transcript_log(thread, interaction.user, ticket)
         await self.bot.db.close_ticket(
             thread_id=thread.id,
             closed_at=utc_now_iso(),
             closed_by_id=interaction.user.id,
             closed_by_name=str(interaction.user),
             log_message_id=log_message_id,
+            transcript_message_url=transcript_message_url,
         )
         try:
             await thread.send(f"Ticket closed by {interaction.user.mention}.")

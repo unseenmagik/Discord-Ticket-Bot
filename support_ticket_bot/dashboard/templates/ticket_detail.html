@@ -18,7 +18,14 @@
         <div class="label">Deleted at</div><div class="value">{{ ticket.deleted_at or '—' }}</div>
         <div class="label">Deleted by</div><div class="value">{{ ticket.deleted_by_name or '—' }}</div>
         <div class="label">Log message ID</div><div class="value">{{ ticket.log_message_id or '—' }}</div>
-        <div class="label">Transcript URL</div><div class="value">{{ ticket.transcript_message_url or '—' }}</div>
+        <div class="label">Transcript URL</div>
+        <div class="value">
+            {% if ticket.transcript_message_url %}
+            <a href="{{ ticket.transcript_message_url }}" target="_blank" rel="noopener noreferrer">Open transcript log message</a>
+            {% else %}
+            —
+            {% endif %}
+        </div>
     </div>
 </div>
 {% endblock %}
