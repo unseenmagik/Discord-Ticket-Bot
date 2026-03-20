@@ -77,7 +77,7 @@ pip install -r requirements.txt
 cp config.ini.example config.ini
 ```
 
-5. Create a MariaDB/MySQL database and user:
+5. Create a MariaDB/MySQL database, create a user, and set that user's password in the SQL below by replacing `CHANGE_ME`:
 
 ```sql
 CREATE DATABASE discord_tickets CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -96,7 +96,7 @@ mysql -u ticketbot -p discord_tickets < schema.sql
 
 - Discord token, guild ID, panel channel ID
 - Transcript channel ID
-- MariaDB/MySQL connection details in `[database]`
+- MariaDB/MySQL connection details in `[database]`, using the same database name, username, and password you created in step 5
 - Dashboard credentials in `[dashboard]`
 - Server label → channel ID mappings in `[servers]`
 
