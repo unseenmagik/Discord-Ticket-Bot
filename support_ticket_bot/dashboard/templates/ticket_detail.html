@@ -20,8 +20,8 @@
         <div class="label">Log message ID</div><div class="value">{{ ticket.log_message_id or '—' }}</div>
         <div class="label">Transcript URL</div>
         <div class="value">
-            {% if ticket.transcript_message_url %}
-            <a href="{{ ticket.transcript_message_url }}" target="_blank" rel="noopener noreferrer">Open HTML transcript</a>
+            {% if ticket.status in ['closed', 'deleted'] %}
+            <a href="/tickets/{{ ticket.thread_id }}/transcript" target="_blank" rel="noopener noreferrer">Open HTML transcript</a>
             {% else %}
             —
             {% endif %}
