@@ -70,6 +70,9 @@ class TicketsCog(commands.Cog):
         return None
 
     async def _set_thread_controls(self, thread: discord.Thread, *, closed: bool) -> None:
+        if thread.archived:
+            return
+
         control_message = await self._find_thread_control_message(thread, thread.id)
         if control_message is None:
             return
@@ -80,6 +83,45 @@ class TicketsCog(commands.Cog):
             await control_message.edit(view=view)
         except discord.HTTPException:
             log.exception("Failed to update thread controls for thread_id=%s", thread.id)
+
+    async def _delete_seed_message(self, ticket: dict) -> None:
+        channel_id = ticket.get("target_channel_id")
+        message_id = ticket.get("seed_message_id")
+        if not channel_id or not message_id:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                return
+
+        if not isinstance(channel, discord.TextChannel):
+            return
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.NotFound:
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            log.exception(
+                "Failed to fetch seed message for thread_id=%s seed_message_id=%s",
+                ticket.get("thread_id"),
+                message_id,
+            )
+            return
+
+        try:
+            await message.delete()
+        except discord.NotFound:
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            log.exception(
+                "Failed to delete seed message for thread_id=%s seed_message_id=%s",
+                ticket.get("thread_id"),
+                message_id,
+            )
 
     async def _resolve_thread(self, thread_id: int) -> discord.Thread | None:
         cached = self.bot.get_channel(thread_id)
@@ -341,6 +383,7 @@ class TicketsCog(commands.Cog):
                 await thread.delete()
             except discord.HTTPException:
                 pass
+        await self._delete_seed_message(ticket)
         await self.bot.db.mark_deleted(
             thread_id=thread_id,
             deleted_at=utc_now_iso(),
@@ -375,6 +418,7 @@ class TicketsCog(commands.Cog):
                 except discord.HTTPException:
                     log.exception("Failed to delete expired closed thread %s", ticket["thread_id"])
                     continue
+            await self._delete_seed_message(ticket)
             await self.bot.db.mark_deleted(
                 thread_id=ticket["thread_id"],
                 deleted_at=utc_now_iso(),
