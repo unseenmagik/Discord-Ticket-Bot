@@ -46,6 +46,7 @@ discord_ticket_bot_web_mysql/
             ├── base.html
             ├── login.html
             ├── index.html
+            ├── stats.html
             └── ticket_detail.html
 ```
 
@@ -213,6 +214,7 @@ To access the WebUI:
 Inside the WebUI you can:
 
 - View total, open, closed, and deleted ticket counts
+- Open a dedicated stats page with ticket trends, server breakdowns, top openers, top closers, and oldest open tickets
 - Filter tickets by status
 - Open an individual ticket detail page by clicking `Open`
 - Open the saved HTML transcript for a closed ticket directly in your browser

@@ -9,8 +9,9 @@
         body { font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }
         a { color: #93c5fd; text-decoration: none; }
         .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }
-        .topbar-left { display:flex; align-items:center; gap:18px; }
-        .topnav a { margin-right:14px; }
+        .topbar-left { display:flex; align-items:center; gap:24px; }
+        .topnav { display:flex; gap:16px; }
+        .topnav a { color:#dbeafe; }
         .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
         .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:24px; }
         .card { background:#1f2937; border-radius:12px; padding:16px; }
@@ -29,6 +30,14 @@
         .grid { display:grid; grid-template-columns: 220px 1fr; gap:16px; }
         .label { color:#9ca3af; font-size:0.9rem; }
         .value { font-size:1rem; }
+        .stack { display:grid; gap:16px; }
+        .split { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+        .bar-list { display:grid; gap:10px; }
+        .bar-row { display:grid; grid-template-columns:minmax(120px, 1fr) minmax(140px, 3fr) auto; gap:10px; align-items:center; }
+        .bar-label { color:#e5e7eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .bar-track { height:10px; background:#111827; border-radius:999px; overflow:hidden; }
+        .bar-fill { height:100%; background:linear-gradient(90deg, #2563eb, #60a5fa); border-radius:999px; }
+        .bar-value { color:#d1d5db; font-variant-numeric:tabular-nums; }
         .notice { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#064e3b; color:#d1fae5; }
         .muted { color:#9ca3af; }
         .help { font-size:0.92rem; color:#9ca3af; margin-top:-8px; margin-bottom:16px; }
@@ -39,10 +48,11 @@
         <div class="topbar-left">
             <div><strong>Discord Ticket Dashboard</strong></div>
             {% if user %}
-            <div class="topnav">
+            <nav class="topnav">
                 <a href="/">Dashboard</a>
+                <a href="/stats">Stats</a>
                 <a href="/admin">Admin</a>
-            </div>
+            </nav>
             {% endif %}
         </div>
         <div>{% if user %}Signed in as {{ user }} · <a href="/logout">Logout</a>{% endif %}</div>

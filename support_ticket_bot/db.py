@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiomysql
@@ -14,6 +16,22 @@ CREATE TABLE IF NOT EXISTS app_settings (
     setting_value TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _counter_rows(counter: Counter[str], *, limit: int = 10) -> list[dict[str, Any]]:
+    return [{"label": label, "count": count} for label, count in counter.most_common(limit)]
 
 
 class TicketDatabase:
@@ -289,3 +307,111 @@ class DashboardDatabase:
                         """,
                         (key, value),
                     )
+
+    def get_ticket_analytics(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM tickets ORDER BY created_at DESC")
+                tickets = list(cur.fetchall())
+
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = today_start.replace(day=1)
+        year_start = today_start.replace(month=1, day=1)
+        trend_start = today_start - timedelta(days=29)
+
+        created_today = 0
+        created_this_week = 0
+        created_this_month = 0
+        created_this_year = 0
+        total_close_seconds = 0.0
+        closed_ticket_count = 0
+
+        tickets_by_day: Counter[str] = Counter()
+        tickets_by_server: Counter[str] = Counter()
+        top_openers: Counter[str] = Counter()
+        top_closers: Counter[str] = Counter()
+        oldest_open: list[dict[str, Any]] = []
+
+        for ticket in tickets:
+            opener_name = ticket.get("opener_name") or str(ticket.get("opener_id") or "Unknown user")
+            server_label = ticket.get("server_label") or "Unknown server"
+            created_at = _parse_iso_datetime(ticket.get("created_at"))
+            closed_at = _parse_iso_datetime(ticket.get("closed_at"))
+
+            top_openers[opener_name] += 1
+            tickets_by_server[server_label] += 1
+
+            if created_at is not None:
+                if created_at >= today_start:
+                    created_today += 1
+                if created_at >= week_start:
+                    created_this_week += 1
+                if created_at >= month_start:
+                    created_this_month += 1
+                if created_at >= year_start:
+                    created_this_year += 1
+                if created_at >= trend_start:
+                    tickets_by_day[created_at.date().isoformat()] += 1
+                if ticket.get("status") == "open":
+                    oldest_open.append(
+                        {
+                            "thread_id": ticket["thread_id"],
+                            "server_label": server_label,
+                            "opener_name": opener_name,
+                            "created_at": ticket.get("created_at"),
+                            "age_hours": round((now - created_at).total_seconds() / 3600, 1),
+                        }
+                    )
+
+            if created_at is not None and closed_at is not None and closed_at >= created_at:
+                total_close_seconds += (closed_at - created_at).total_seconds()
+                closed_ticket_count += 1
+
+            closed_by_name = ticket.get("closed_by_name")
+            if closed_by_name:
+                top_closers[closed_by_name] += 1
+
+        daily_created: list[dict[str, Any]] = []
+        max_daily_count = 0
+        for offset in range(30):
+            day = trend_start + timedelta(days=offset)
+            count = tickets_by_day.get(day.date().isoformat(), 0)
+            max_daily_count = max(max_daily_count, count)
+            daily_created.append(
+                {
+                    "date": day.date().isoformat(),
+                    "label": day.strftime("%d %b"),
+                    "count": count,
+                }
+            )
+
+        for row in daily_created:
+            if row["count"] == 0 or max_daily_count == 0:
+                row["width_pct"] = 0
+            else:
+                row["width_pct"] = max(8, round((row["count"] / max_daily_count) * 100, 1))
+
+        by_server = _counter_rows(tickets_by_server)
+        max_server_count = max((row["count"] for row in by_server), default=0)
+        for row in by_server:
+            row["width_pct"] = 0 if max_server_count == 0 else max(8, round((row["count"] / max_server_count) * 100, 1))
+
+        oldest_open.sort(key=lambda row: row["age_hours"], reverse=True)
+        average_close_hours = None
+        if closed_ticket_count:
+            average_close_hours = round((total_close_seconds / closed_ticket_count) / 3600, 1)
+
+        return {
+            "tickets_today": created_today,
+            "tickets_this_week": created_this_week,
+            "tickets_this_month": created_this_month,
+            "tickets_this_year": created_this_year,
+            "average_close_hours": average_close_hours,
+            "daily_created": daily_created,
+            "by_server": by_server,
+            "top_openers": _counter_rows(top_openers),
+            "top_closers": _counter_rows(top_closers),
+            "oldest_open": oldest_open[:10],
+        }
