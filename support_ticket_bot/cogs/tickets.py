@@ -177,13 +177,18 @@ class TicketsCog(commands.Cog):
             log.warning("Could not resolve ticket opener for created DM opener_id=%s", opener_id)
             return
 
+        embed = self._embed(
+            "Ticket Created",
+            "Your ticket has been created successfully.",
+        )
+        embed.color = discord.Color.green()
+        embed.add_field(name="Ticket Name", value=thread.name, inline=False)
+        embed.add_field(name="Queue", value=server_label, inline=True)
+        embed.add_field(name="Ticket ID", value=f"`{thread.id}`", inline=True)
+        embed.add_field(name="Open Ticket", value=f"[Open in Discord]({self._thread_link(thread)})", inline=False)
+
         try:
-            await user.send(
-                "Your ticket has been created.\n"
-                f"Ticket name: {thread.name}\n"
-                f"Queue: {server_label}\n"
-                f"Open it here: {self._thread_link(thread)}"
-            )
+            await user.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
             log.warning(
                 "Failed to send ticket created DM for thread_id=%s opener_id=%s",
@@ -204,12 +209,18 @@ class TicketsCog(commands.Cog):
             log.warning("Could not resolve ticket opener for transcript DM opener_id=%s", opener_id)
             return
 
+        embed = self._embed(
+            "Ticket Closed",
+            "Your ticket has been closed.",
+        )
+        embed.color = discord.Color.red()
+        embed.add_field(name="Ticket ID", value=f"`{ticket.get('thread_id')}`", inline=True)
+        embed.add_field(name="Queue", value=str(ticket.get("server_label") or "Unknown"), inline=True)
+        embed.add_field(name="Transcript", value=f"[Open Transcript]({transcript_url})", inline=False)
+        embed.set_footer(text="If prompted, sign in to the dashboard with Discord to open it.")
+
         try:
-            await user.send(
-                "Your ticket has been closed.\n"
-                f"You can view the transcript here: {transcript_url}\n"
-                "If prompted, sign in to the dashboard with Discord to open it."
-            )
+            await user.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
             log.warning(
                 "Failed to send transcript DM for thread_id=%s opener_id=%s",
