@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -55,13 +56,22 @@ class TicketsCog(commands.Cog):
             delete_after = self.bot.settings.interaction_delete_after_seconds
         try:
             if interaction.response.is_done():
-                await interaction.followup.send(content, ephemeral=True)
+                message = await interaction.followup.send(content, ephemeral=True, wait=True)
+                if delete_after and message is not None:
+                    asyncio.create_task(self._delete_followup_message_later(message, delete_after))
             else:
                 await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
         except discord.NotFound:
             log.warning("Interaction expired before a reply could be sent.")
         except discord.HTTPException:
             log.exception("Failed to send interaction reply.")
+
+    async def _delete_followup_message_later(self, message: discord.WebhookMessage, delay: float) -> None:
+        await asyncio.sleep(delay)
+        try:
+            await message.delete()
+        except (discord.NotFound, discord.HTTPException):
+            pass
 
     async def _find_thread_control_message(self, thread: discord.Thread, thread_id: int) -> discord.Message | None:
         close_custom_id = f"ticket:close:{thread_id}"
