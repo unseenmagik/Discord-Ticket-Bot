@@ -409,8 +409,12 @@ class DashboardDatabase:
         tickets_by_server: Counter[str] = Counter()
         top_openers: Counter[str] = Counter()
         top_closers: Counter[str] = Counter()
+        top_reopeners: Counter[str] = Counter()
+        top_deleters: Counter[str] = Counter()
         oldest_open: list[dict[str, Any]] = []
         created_times: list[datetime] = []
+        reopened_times: list[datetime] = []
+        deleted_times: list[datetime] = []
 
         for ticket in tickets:
             opener_name = ticket.get("opener_name") or str(ticket.get("opener_id") or "Unknown user")
@@ -448,9 +452,19 @@ class DashboardDatabase:
 
             if _in_range(reopened_at, start_at, end_at):
                 reopened_count += 1
+                if reopened_at is not None:
+                    reopened_times.append(reopened_at)
+                reopened_by_name = ticket.get("reopened_by_name")
+                if reopened_by_name:
+                    top_reopeners[reopened_by_name] += 1
 
             if _in_range(deleted_at, start_at, end_at):
                 deleted_count += 1
+                if deleted_at is not None:
+                    deleted_times.append(deleted_at)
+                deleted_by_name = ticket.get("deleted_by_name")
+                if deleted_by_name:
+                    top_deleters[deleted_by_name] += 1
 
         by_server = _counter_rows(tickets_by_server)
         max_server_count = max((row["count"] for row in by_server), default=0)
@@ -462,13 +476,16 @@ class DashboardDatabase:
         if closed_ticket_count:
             average_close_hours = round((total_close_seconds / closed_ticket_count) / 3600, 1)
 
-        if created_times:
-            trend_start = start_at or min(created_times)
-            trend_end = end_at or max(created_times)
+        activity_times = [*created_times, *reopened_times, *deleted_times]
+        if activity_times:
+            trend_start = start_at or min(activity_times)
+            trend_end = end_at or max(activity_times)
         else:
             trend_end = end_at or now
             trend_start = start_at or (trend_end - timedelta(days=29))
-        trend_points = _build_trend_points(created_times, start_at=trend_start, end_at=trend_end)
+        opened_trend_points = _build_trend_points(created_times, start_at=trend_start, end_at=trend_end)
+        reopened_trend_points = _build_trend_points(reopened_times, start_at=trend_start, end_at=trend_end)
+        deleted_trend_points = _build_trend_points(deleted_times, start_at=trend_start, end_at=trend_end)
 
         return {
             "opened_count": opened_count,
@@ -477,9 +494,13 @@ class DashboardDatabase:
             "deleted_count": deleted_count,
             "open_count": len(oldest_open),
             "average_close_hours": average_close_hours,
-            "trend_points": trend_points,
+            "opened_trend_points": opened_trend_points,
+            "reopened_trend_points": reopened_trend_points,
+            "deleted_trend_points": deleted_trend_points,
             "by_server": by_server,
             "top_openers": _counter_rows(top_openers),
             "top_closers": _counter_rows(top_closers),
+            "top_reopeners": _counter_rows(top_reopeners),
+            "top_deleters": _counter_rows(top_deleters),
             "oldest_open": oldest_open[:10],
         }

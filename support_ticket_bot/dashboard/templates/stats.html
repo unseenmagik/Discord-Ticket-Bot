@@ -94,6 +94,56 @@
         </div>
     </div>
 
+    <div class="split">
+        <div class="card">
+            <h2>Top reopeners</h2>
+            {% if analytics.top_reopeners %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Tickets reopened</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in analytics.top_reopeners %}
+                    <tr>
+                        <td>{{ row.label }}</td>
+                        <td>{{ row.count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No reopen activity yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>Top deleters</h2>
+            {% if analytics.top_deleters %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Tickets deleted</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in analytics.top_deleters %}
+                    <tr>
+                        <td>{{ row.label }}</td>
+                        <td>{{ row.count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No delete activity yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
     <div class="card">
         <h2>Oldest open tickets</h2>
         {% if analytics.oldest_open %}
@@ -126,38 +176,76 @@
         {% endif %}
     </div>
 
-    <div class="card">
-        <h2>Opened over time</h2>
-        {% if analytics.trend_points %}
-        <div class="bar-list">
-            {% for row in analytics.trend_points %}
-            <div class="bar-row">
-                <div class="bar-label">{{ row.label }}</div>
-                <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
-                <div class="bar-value">{{ row.count }}</div>
+    <div class="split">
+        <div class="card">
+            <h2>Opened over time</h2>
+            {% if analytics.opened_trend_points %}
+            <div class="bar-list">
+                {% for row in analytics.opened_trend_points %}
+                <div class="bar-row">
+                    <div class="bar-label">{{ row.label }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                    <div class="bar-value">{{ row.count }}</div>
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
+            {% else %}
+            <p class="muted">No ticket data yet.</p>
+            {% endif %}
         </div>
-        {% else %}
-        <p class="muted">No ticket data yet.</p>
-        {% endif %}
+
+        <div class="card">
+            <h2>Reopened over time</h2>
+            {% if analytics.reopened_trend_points %}
+            <div class="bar-list">
+                {% for row in analytics.reopened_trend_points %}
+                <div class="bar-row">
+                    <div class="bar-label">{{ row.label }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                    <div class="bar-value">{{ row.count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="muted">No reopen activity yet.</p>
+            {% endif %}
+        </div>
     </div>
 
-    <div class="card">
-        <h2>Tickets by server</h2>
-        {% if analytics.by_server %}
-        <div class="bar-list">
-            {% for row in analytics.by_server %}
-            <div class="bar-row">
-                <div class="bar-label">{{ row.label }}</div>
-                <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
-                <div class="bar-value">{{ row.count }}</div>
+    <div class="split">
+        <div class="card">
+            <h2>Deleted over time</h2>
+            {% if analytics.deleted_trend_points %}
+            <div class="bar-list">
+                {% for row in analytics.deleted_trend_points %}
+                <div class="bar-row">
+                    <div class="bar-label">{{ row.label }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                    <div class="bar-value">{{ row.count }}</div>
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
+            {% else %}
+            <p class="muted">No delete activity yet.</p>
+            {% endif %}
         </div>
-        {% else %}
-        <p class="muted">No server data yet.</p>
-        {% endif %}
+
+        <div class="card">
+            <h2>Tickets by server</h2>
+            {% if analytics.by_server %}
+            <div class="bar-list">
+                {% for row in analytics.by_server %}
+                <div class="bar-row">
+                    <div class="bar-label">{{ row.label }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                    <div class="bar-value">{{ row.count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="muted">No server data yet.</p>
+            {% endif %}
+        </div>
     </div>
 </div>
 {% endblock %}
