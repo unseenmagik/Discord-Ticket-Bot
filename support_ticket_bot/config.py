@@ -36,13 +36,37 @@ class BotSettings:
     dashboard_host: str
     dashboard_port: int
     dashboard_secret_key: str
-    dashboard_username: str
-    dashboard_password: str
     dashboard_base_url: str
+    dashboard_discord_client_id: str
+    dashboard_discord_client_secret: str
+    dashboard_discord_redirect_uri: str
+    dashboard_admin_user_ids: list[int]
+    dashboard_role_channel_access: dict[int, list[int]]
+    dashboard_role_full_access_ids: list[int]
 
 
 def _parse_bool(config: ConfigParser, section: str, key: str, fallback: bool) -> bool:
     return config.getboolean(section, key, fallback=fallback)
+
+
+def _parse_int_list(raw: str) -> list[int]:
+    return [int(item.strip()) for item in raw.split(",") if item.strip()]
+
+
+def _parse_role_channel_access(config: ConfigParser, section: str) -> tuple[dict[int, list[int]], list[int]]:
+    role_channel_access: dict[int, list[int]] = {}
+    full_access_role_ids: list[int] = []
+    if not config.has_section(section):
+        return role_channel_access, full_access_role_ids
+
+    for role_id_raw, channels_raw in config.items(section):
+        role_id = int(role_id_raw.strip())
+        value = channels_raw.strip()
+        if value == "*":
+            full_access_role_ids.append(role_id)
+            continue
+        role_channel_access[role_id] = _parse_int_list(value)
+    return role_channel_access, full_access_role_ids
 
 
 def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
@@ -77,7 +101,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
     embed_color = int(embed_color_raw, 16) if embed_color_raw.lower().startswith("0x") else int(embed_color_raw)
 
     role_ids_raw = config.get("support", "role_ids", fallback="")
-    support_role_ids = [int(item.strip()) for item in role_ids_raw.split(",") if item.strip()]
+    support_role_ids = _parse_int_list(role_ids_raw)
 
     server_targets: dict[str, int] = {}
     if config.has_section("servers"):
@@ -99,9 +123,19 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
     dashboard_host = config.get("dashboard", "host", fallback="127.0.0.1")
     dashboard_port = config.getint("dashboard", "port", fallback=8000)
     dashboard_secret_key = config.get("dashboard", "secret_key", fallback="change-me")
-    dashboard_username = config.get("dashboard", "username", fallback="admin")
-    dashboard_password = config.get("dashboard", "password", fallback="change-me")
     dashboard_base_url = config.get("dashboard", "base_url", fallback=f"http://{dashboard_host}:{dashboard_port}")
+    dashboard_discord_client_id = config.get("dashboard", "discord_client_id", fallback="")
+    dashboard_discord_client_secret = config.get("dashboard", "discord_client_secret", fallback="")
+    dashboard_discord_redirect_uri = config.get(
+        "dashboard",
+        "discord_redirect_uri",
+        fallback=f"{dashboard_base_url.rstrip('/')}/auth/discord/callback",
+    )
+    dashboard_admin_user_ids = _parse_int_list(config.get("dashboard", "admin_user_ids", fallback=""))
+    dashboard_role_channel_access, dashboard_role_full_access_ids = _parse_role_channel_access(
+        config,
+        "dashboard_role_access",
+    )
 
     return BotSettings(
         token=token,
@@ -133,7 +167,11 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
         dashboard_secret_key=dashboard_secret_key,
-        dashboard_username=dashboard_username,
-        dashboard_password=dashboard_password,
         dashboard_base_url=dashboard_base_url,
+        dashboard_discord_client_id=dashboard_discord_client_id,
+        dashboard_discord_client_secret=dashboard_discord_client_secret,
+        dashboard_discord_redirect_uri=dashboard_discord_redirect_uri,
+        dashboard_admin_user_ids=dashboard_admin_user_ids,
+        dashboard_role_channel_access=dashboard_role_channel_access,
+        dashboard_role_full_access_ids=dashboard_role_full_access_ids,
     )

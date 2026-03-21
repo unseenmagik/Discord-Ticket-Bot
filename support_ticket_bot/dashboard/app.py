@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -10,12 +11,30 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from support_ticket_bot.config import BotSettings, load_settings
+from support_ticket_bot.dashboard.auth import (
+    DashboardViewer,
+    DiscordOAuthError,
+    build_discord_authorize_url,
+    build_state_cookie,
+    build_viewer_cookie,
+    build_viewer_from_discord_user,
+    cookie_should_be_secure,
+    create_state_value,
+    discord_oauth_configured,
+    exchange_code_for_token,
+    fetch_discord_member_roles,
+    fetch_discord_user,
+    load_viewer_from_cookie,
+    validate_state_cookie,
+)
 from support_ticket_bot.db import DashboardDatabase
 from support_ticket_bot.transcript import TRANSCRIPTS_DIR
-from support_ticket_bot.utils import DEFAULT_MESSAGE_TEMPLATES, hash_password
+from support_ticket_bot.utils import DEFAULT_MESSAGE_TEMPLATES
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+SESSION_COOKIE_NAME = "ticket_dashboard_session"
+STATE_COOKIE_NAME = "ticket_dashboard_oauth_state"
 STATS_RANGE_LABELS = {
     "7d": "Last 7 days",
     "30d": "Last 30 days",
@@ -26,12 +45,39 @@ STATS_RANGE_LABELS = {
 }
 
 
-def require_login(request: Request) -> str:
-    cookie = request.cookies.get("ticket_dashboard_auth")
-    expected = hash_password(f"{request.app.state.settings.dashboard_username}:{request.app.state.settings.dashboard_password}")
-    if cookie != expected:
+def _template_context(request: Request, viewer: DashboardViewer | None, **extra: object) -> dict[str, object]:
+    return {
+        "request": request,
+        "viewer": viewer,
+        "user": viewer.display_name if viewer else None,
+        "is_admin": viewer.is_admin if viewer else False,
+        **extra,
+    }
+
+
+def require_viewer(request: Request) -> DashboardViewer:
+    viewer = load_viewer_from_cookie(
+        request.app.state.settings.dashboard_secret_key,
+        request.cookies.get(SESSION_COOKIE_NAME),
+    )
+    if viewer is None:
         raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"})
-    return request.app.state.settings.dashboard_username
+    return viewer
+
+
+def require_admin(viewer: DashboardViewer = Depends(require_viewer)) -> DashboardViewer:
+    if not viewer.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    return viewer
+
+
+def _ticket_access_kwargs(viewer: DashboardViewer) -> dict[str, object]:
+    allow_all = viewer.is_admin or viewer.has_global_ticket_access
+    return {
+        "opener_id": None if allow_all else viewer.discord_user_id,
+        "channel_ids": None if allow_all else viewer.allowed_channel_ids,
+        "allow_all": allow_all,
+    }
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -121,43 +167,100 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/static/favicon.svg", status_code=307)
 
     @app.get("/login", response_class=HTMLResponse)
-    async def login_page(request: Request):
-        return TEMPLATES.TemplateResponse("login.html", {"request": request, "error": None})
-
-    @app.post("/login", response_class=HTMLResponse)
-    async def login_action(request: Request, username: str = Form(...), password: str = Form(...)):
+    async def login_page(request: Request, error: str | None = None):
         settings: BotSettings = request.app.state.settings
-        if username != settings.dashboard_username or password != settings.dashboard_password:
-            return TEMPLATES.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials."}, status_code=401)
-        response = RedirectResponse(url="/", status_code=303)
+        return TEMPLATES.TemplateResponse(
+            "login.html",
+            _template_context(
+                request,
+                None,
+                error=error,
+                oauth_configured=discord_oauth_configured(settings),
+            ),
+        )
+
+    @app.get("/auth/discord/start")
+    async def discord_login_start(request: Request):
+        settings: BotSettings = request.app.state.settings
+        if not discord_oauth_configured(settings):
+            return RedirectResponse(
+                url="/login?error=" + quote_plus("Discord OAuth is not configured yet."),
+                status_code=303,
+            )
+
+        state = create_state_value()
+        response = RedirectResponse(
+            url=build_discord_authorize_url(settings, state),
+            status_code=303,
+        )
         response.set_cookie(
-            "ticket_dashboard_auth",
-            hash_password(f"{username}:{password}"),
+            STATE_COOKIE_NAME,
+            build_state_cookie(settings.dashboard_secret_key, state),
             httponly=True,
             samesite="lax",
+            secure=cookie_should_be_secure(settings),
+            max_age=600,
         )
+        return response
+
+    @app.get("/auth/discord/callback")
+    async def discord_login_callback(
+        request: Request,
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+    ):
+        settings: BotSettings = request.app.state.settings
+        if error:
+            return RedirectResponse(url="/login?error=" + quote_plus(f"Discord login failed: {error}"), status_code=303)
+        if not code or not state:
+            return RedirectResponse(url="/login?error=" + quote_plus("Missing Discord OAuth callback data."), status_code=303)
+        if not validate_state_cookie(settings.dashboard_secret_key, request.cookies.get(STATE_COOKIE_NAME), state):
+            return RedirectResponse(url="/login?error=" + quote_plus("Discord login state was invalid or expired."), status_code=303)
+
+        try:
+            access_token = await exchange_code_for_token(settings, code)
+            user_payload = await fetch_discord_user(access_token)
+            role_ids = await fetch_discord_member_roles(access_token, settings.guild_id)
+            viewer = build_viewer_from_discord_user(settings, user_payload, role_ids=role_ids)
+        except DiscordOAuthError as exc:
+            return RedirectResponse(url="/login?error=" + quote_plus(str(exc)), status_code=303)
+
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            build_viewer_cookie(settings.dashboard_secret_key, viewer),
+            httponly=True,
+            samesite="lax",
+            secure=cookie_should_be_secure(settings),
+            max_age=60 * 60 * 24 * 7,
+        )
+        response.delete_cookie(STATE_COOKIE_NAME)
         return response
 
     @app.get("/logout")
     async def logout():
         response = RedirectResponse(url="/login", status_code=303)
-        response.delete_cookie("ticket_dashboard_auth")
+        response.delete_cookie(SESSION_COOKIE_NAME)
+        response.delete_cookie(STATE_COOKIE_NAME)
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request, status_filter: str | None = None, user: str = Depends(require_login)):
+    async def index(request: Request, status_filter: str | None = None, viewer: DashboardViewer = Depends(require_viewer)):
         db: DashboardDatabase = request.app.state.db
-        stats = db.get_stats()
-        tickets = db.list_tickets(status=status_filter, limit=200)
+        access_kwargs = _ticket_access_kwargs(viewer)
+        stats = db.get_stats(**access_kwargs)
+        tickets = db.list_tickets(status=status_filter, limit=200, **access_kwargs)
         return TEMPLATES.TemplateResponse(
             "index.html",
-            {
-                "request": request,
-                "stats": stats,
-                "tickets": tickets,
-                "status_filter": status_filter,
-                "user": user,
-            },
+            _template_context(
+                request,
+                viewer,
+                stats=stats,
+                tickets=tickets,
+                status_filter=status_filter,
+                limited_access=not (viewer.is_admin or viewer.has_global_ticket_access),
+            ),
         )
 
     @app.get("/stats", response_class=HTMLResponse)
@@ -166,33 +269,33 @@ def create_app() -> FastAPI:
         range: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
-        user: str = Depends(require_login),
+        viewer: DashboardViewer = Depends(require_admin),
     ):
         db: DashboardDatabase = request.app.state.db
         start_at, end_at, filters = _resolve_stats_range(range, start_date, end_date)
         analytics = db.get_ticket_analytics(start_at=start_at, end_at=end_at)
         return TEMPLATES.TemplateResponse(
             "stats.html",
-            {
-                "request": request,
-                "analytics": analytics,
-                "filters": filters,
-                "user": user,
-            },
+            _template_context(
+                request,
+                viewer,
+                analytics=analytics,
+                filters=filters,
+            ),
         )
 
     @app.get("/admin", response_class=HTMLResponse)
-    async def admin_page(request: Request, saved: int = 0, user: str = Depends(require_login)):
+    async def admin_page(request: Request, saved: int = 0, viewer: DashboardViewer = Depends(require_admin)):
         db: DashboardDatabase = request.app.state.db
         templates = db.get_message_templates()
         return TEMPLATES.TemplateResponse(
             "admin.html",
-            {
-                "request": request,
-                "templates": templates,
-                "saved": bool(saved),
-                "user": user,
-            },
+            _template_context(
+                request,
+                viewer,
+                templates=templates,
+                saved=bool(saved),
+            ),
         )
 
     @app.post("/admin/messages")
@@ -202,7 +305,7 @@ def create_app() -> FastAPI:
         panel_description: str = Form(...),
         thread_embed_title: str = Form(...),
         thread_embed_description: str = Form(...),
-        user: str = Depends(require_login),
+        viewer: DashboardViewer = Depends(require_admin),
     ):
         db: DashboardDatabase = request.app.state.db
         values = {
@@ -216,22 +319,26 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/admin?saved=1", status_code=303)
 
     @app.get("/tickets/{thread_id}", response_class=HTMLResponse)
-    async def ticket_detail(thread_id: int, request: Request, user: str = Depends(require_login)):
+    async def ticket_detail(thread_id: int, request: Request, viewer: DashboardViewer = Depends(require_viewer)):
         db: DashboardDatabase = request.app.state.db
-        ticket = db.get_ticket(thread_id)
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
         return TEMPLATES.TemplateResponse(
             "ticket_detail.html",
-            {
-                "request": request,
-                "ticket": ticket,
-                "user": user,
-            },
+            _template_context(
+                request,
+                viewer,
+                ticket=ticket,
+            ),
         )
 
     @app.get("/tickets/{thread_id}/transcript", response_class=HTMLResponse)
-    async def ticket_transcript(thread_id: int, request: Request, user: str = Depends(require_login)):
+    async def ticket_transcript(thread_id: int, request: Request, viewer: DashboardViewer = Depends(require_viewer)):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
         transcript_path = TRANSCRIPTS_DIR / f"{thread_id}.html"
         if not transcript_path.exists():
             raise HTTPException(status_code=404, detail="Transcript not found")

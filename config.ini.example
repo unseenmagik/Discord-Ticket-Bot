@@ -37,11 +37,18 @@ enabled = true
 host = 127.0.0.1
 port = 8000
 secret_key = CHANGE_ME_TO_A_LONG_RANDOM_STRING
-username = admin
-password = CHANGE_ME
 base_url = http://127.0.0.1:8000
+discord_client_id = YOUR_DISCORD_APPLICATION_CLIENT_ID
+discord_client_secret = YOUR_DISCORD_APPLICATION_CLIENT_SECRET
+discord_redirect_uri = http://127.0.0.1:8000/auth/discord/callback
+admin_user_ids = 123456789012345678
 
 [servers]
 Survival Server = 111111111111111111
 Skyblock Server = 222222222222222222
 Creative Server = 333333333333333333
+
+[dashboard_role_access]
+123456789012345678 = 111111111111111111
+234567890123456789 = 222222222222222222,333333333333333333
+345678901234567890 = *

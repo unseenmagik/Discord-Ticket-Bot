@@ -324,16 +324,61 @@ class DashboardDatabase:
             with conn.cursor() as cur:
                 cur.execute(APP_SETTINGS_TABLE_SQL)
 
-    def get_stats(self) -> dict[str, int]:
+    def _ticket_access_filter_sql(
+        self,
+        *,
+        opener_id: int | None,
+        channel_ids: list[int] | None,
+        allow_all: bool,
+    ) -> tuple[str, list[Any]]:
+        if allow_all:
+            return "", []
+
+        filters: list[str] = []
+        params: list[Any] = []
+        if opener_id is not None:
+            filters.append("opener_id = %s")
+            params.append(opener_id)
+        if channel_ids:
+            placeholders = ", ".join(["%s"] * len(channel_ids))
+            filters.append(f"target_channel_id IN ({placeholders})")
+            params.extend(channel_ids)
+
+        if not filters:
+            return " WHERE 1 = 0", []
+        return " WHERE (" + " OR ".join(filters) + ")", params
+
+    def get_stats(
+        self,
+        *,
+        opener_id: int | None = None,
+        channel_ids: list[int] | None = None,
+        allow_all: bool = False,
+    ) -> dict[str, int]:
+        access_sql, access_params = self._ticket_access_filter_sql(
+            opener_id=opener_id,
+            channel_ids=channel_ids,
+            allow_all=allow_all,
+        )
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM tickets")
+                cur.execute(f"SELECT COUNT(*) AS c FROM tickets{access_sql}", tuple(access_params))
                 total = cur.fetchone()["c"]
-                cur.execute("SELECT COUNT(*) AS c FROM tickets WHERE status = 'open'")
+                status_prefix = " AND" if access_sql else " WHERE"
+                cur.execute(
+                    f"SELECT COUNT(*) AS c FROM tickets{access_sql}{status_prefix} status = 'open'",
+                    tuple(access_params),
+                )
                 open_count = cur.fetchone()["c"]
-                cur.execute("SELECT COUNT(*) AS c FROM tickets WHERE status = 'closed'")
+                cur.execute(
+                    f"SELECT COUNT(*) AS c FROM tickets{access_sql}{status_prefix} status = 'closed'",
+                    tuple(access_params),
+                )
                 closed_count = cur.fetchone()["c"]
-                cur.execute("SELECT COUNT(*) AS c FROM tickets WHERE status = 'deleted'")
+                cur.execute(
+                    f"SELECT COUNT(*) AS c FROM tickets{access_sql}{status_prefix} status = 'deleted'",
+                    tuple(access_params),
+                )
                 deleted_count = cur.fetchone()["c"]
         return {
             "total": total,
@@ -342,11 +387,26 @@ class DashboardDatabase:
             "deleted": deleted_count,
         }
 
-    def list_tickets(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_tickets(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+        opener_id: int | None = None,
+        channel_ids: list[int] | None = None,
+        allow_all: bool = False,
+    ) -> list[dict[str, Any]]:
         query = "SELECT * FROM tickets"
         params: list[Any] = []
+        access_sql, access_params = self._ticket_access_filter_sql(
+            opener_id=opener_id,
+            channel_ids=channel_ids,
+            allow_all=allow_all,
+        )
+        query += access_sql
+        params.extend(access_params)
         if status in {"open", "closed", "deleted"}:
-            query += " WHERE status = %s"
+            query += " AND status = %s" if access_sql else " WHERE status = %s"
             params.append(status)
         query += " ORDER BY created_at DESC LIMIT %s"
         params.append(limit)
@@ -355,10 +415,27 @@ class DashboardDatabase:
                 cur.execute(query, tuple(params))
                 return list(cur.fetchall())
 
-    def get_ticket(self, thread_id: int) -> dict[str, Any] | None:
+    def get_ticket(
+        self,
+        thread_id: int,
+        *,
+        opener_id: int | None = None,
+        channel_ids: list[int] | None = None,
+        allow_all: bool = False,
+    ) -> dict[str, Any] | None:
+        access_sql, access_params = self._ticket_access_filter_sql(
+            opener_id=opener_id,
+            channel_ids=channel_ids,
+            allow_all=allow_all,
+        )
+        query = "SELECT * FROM tickets WHERE thread_id = %s"
+        params: list[Any] = [thread_id]
+        if access_sql:
+            query += " AND " + access_sql.removeprefix(" WHERE ")
+            params.extend(access_params)
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM tickets WHERE thread_id = %s", (thread_id,))
+                cur.execute(query, tuple(params))
                 return cur.fetchone()
 
     def get_message_templates(self) -> dict[str, str]:

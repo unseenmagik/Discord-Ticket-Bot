@@ -1,6 +1,9 @@
 {% extends 'base.html' %}
 {% block content %}
-<h1>Overview</h1>
+<h1>{% if is_admin %}Overview{% else %}Accessible Tickets{% endif %}</h1>
+{% if limited_access %}
+<p class="muted">This view is limited to tickets you opened plus any ticket queues your Discord roles are allowed to review.</p>
+{% endif %}
 <div class="cards">
     <div class="card"><div class="label">Total</div><div class="value">{{ stats.total }}</div></div>
     <div class="card"><div class="label">Open</div><div class="value">{{ stats.open }}</div></div>

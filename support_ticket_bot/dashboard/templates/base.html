@@ -12,6 +12,8 @@
         .topbar-left { display:flex; align-items:center; gap:24px; }
         .topnav { display:flex; gap:16px; }
         .topnav a { color:#dbeafe; }
+        .user-badge { display:flex; align-items:center; gap:10px; }
+        .user-badge img { width:32px; height:32px; border-radius:50%; }
         .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
         .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin:24px 0; }
         .card { background:#1f2937; border-radius:12px; padding:16px; }
@@ -52,21 +54,31 @@
         .card-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:20px; }
         .card-header p { margin:0; }
         .summary-pill { display:inline-block; padding:10px 14px; border-radius:999px; background:#111827; border:1px solid #374151; color:#e5e7eb; white-space:nowrap; }
+        .discord-button { display:inline-flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:12px 16px; border-radius:10px; background:#5865F2; color:#fff; font-weight:700; }
     </style>
 </head>
 <body>
     <div class="topbar">
         <div class="topbar-left">
             <div><strong>Discord Ticket Dashboard</strong></div>
-            {% if user %}
+            {% if viewer %}
             <nav class="topnav">
                 <a href="/">Dashboard</a>
+                {% if is_admin %}
                 <a href="/stats">Stats</a>
                 <a href="/admin">Admin</a>
+                {% endif %}
             </nav>
             {% endif %}
         </div>
-        <div>{% if user %}Signed in as {{ user }} · <a href="/logout">Logout</a>{% endif %}</div>
+        <div>
+            {% if viewer %}
+            <div class="user-badge">
+                {% if viewer.avatar_url %}<img src="{{ viewer.avatar_url }}" alt="avatar">{% endif %}
+                <span>Signed in as {{ viewer.display_name }}{% if is_admin %} · Admin{% endif %} · <a href="/logout">Logout</a></span>
+            </div>
+            {% endif %}
+        </div>
     </div>
     <div class="container">
         {% block content %}{% endblock %}
