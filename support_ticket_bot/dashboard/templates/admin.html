@@ -39,13 +39,14 @@
         <h3>Role-based queue access</h3>
         {% if role_access_rows %}
         <div class="table-scroll">
-            <table>
+            <table class="table-wide">
                 <thead>
                     <tr>
                         <th>Role ID</th>
-                        <th>Discord Name</th>
+                        <th>Role Name</th>
                         <th>Scope</th>
-                        <th>Queues</th>
+                        <th>Server Name</th>
+                        <th>Server ID</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -57,7 +58,16 @@
                         <td>
                             {% if row.queues %}
                                 {% for queue in row.queues %}
-                                    <div>{{ queue.label }} (<code>{{ queue.channel_id }}</code>)</div>
+                                    <div>{{ queue.label }}</div>
+                                {% endfor %}
+                            {% else %}
+                            All tracked queues
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row.queues %}
+                                {% for queue in row.queues %}
+                                    <div><code>{{ queue.channel_id }}</code></div>
                                 {% endfor %}
                             {% else %}
                             All tracked queues
