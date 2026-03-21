@@ -41,15 +41,17 @@
         .notice { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#064e3b; color:#d1fae5; }
         .muted { color:#9ca3af; }
         .help { font-size:0.92rem; color:#9ca3af; margin-top:-8px; margin-bottom:16px; }
-        .inline-form { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; align-items:end; }
-        .chip-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
-        .chip { display:inline-block; padding:8px 12px; border-radius:999px; background:#111827; border:1px solid #374151; color:#dbeafe; }
+        .inline-form { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; align-items:end; margin-top:8px; }
+        .inline-form input, .inline-form select { margin-bottom:0; }
+        .inline-form button { width:auto; margin:0; }
+        .chip-row { display:flex; flex-wrap:wrap; gap:12px; margin:8px 0 20px; }
+        .chip { display:inline-block; padding:10px 16px; border-radius:999px; background:#111827; border:1px solid #374151; color:#dbeafe; }
         .chip.active { background:#1d4ed8; border-color:#2563eb; color:#eff6ff; }
         .section-title { margin:0 0 12px; }
         .tight-muted { color:#9ca3af; margin:0 0 16px; }
-        .card-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
+        .card-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:20px; }
         .card-header p { margin:0; }
-        .summary-pill { display:inline-block; padding:8px 12px; border-radius:999px; background:#111827; border:1px solid #374151; color:#e5e7eb; white-space:nowrap; }
+        .summary-pill { display:inline-block; padding:10px 14px; border-radius:999px; background:#111827; border:1px solid #374151; color:#e5e7eb; white-space:nowrap; }
     </style>
 </head>
 <body>
