@@ -15,42 +15,6 @@
 <div class="stack">
     <div class="split">
         <div class="card">
-            <h2>Last 30 days</h2>
-            {% if analytics.daily_created %}
-            <div class="bar-list">
-                {% for row in analytics.daily_created %}
-                <div class="bar-row">
-                    <div class="bar-label">{{ row.label }}</div>
-                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
-                    <div class="bar-value">{{ row.count }}</div>
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="muted">No ticket data yet.</p>
-            {% endif %}
-        </div>
-
-        <div class="card">
-            <h2>Tickets by server</h2>
-            {% if analytics.by_server %}
-            <div class="bar-list">
-                {% for row in analytics.by_server %}
-                <div class="bar-row">
-                    <div class="bar-label">{{ row.label }}</div>
-                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
-                    <div class="bar-value">{{ row.count }}</div>
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="muted">No server data yet.</p>
-            {% endif %}
-        </div>
-    </div>
-
-    <div class="split">
-        <div class="card">
             <h2>Top ticket creators</h2>
             {% if analytics.top_openers %}
             <table>
@@ -128,6 +92,40 @@
         </table>
         {% else %}
         <p class="muted">No open tickets right now.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Last 30 days</h2>
+        {% if analytics.daily_created %}
+        <div class="bar-list">
+            {% for row in analytics.daily_created %}
+            <div class="bar-row">
+                <div class="bar-label">{{ row.label }}</div>
+                <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                <div class="bar-value">{{ row.count }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted">No ticket data yet.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Tickets by server</h2>
+        {% if analytics.by_server %}
+        <div class="bar-list">
+            {% for row in analytics.by_server %}
+            <div class="bar-row">
+                <div class="bar-label">{{ row.label }}</div>
+                <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                <div class="bar-value">{{ row.count }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted">No server data yet.</p>
         {% endif %}
     </div>
 </div>
