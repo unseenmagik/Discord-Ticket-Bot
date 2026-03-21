@@ -1,6 +1,6 @@
 [discord]
 token = YOUR_BOT_TOKEN_HERE
-message_content_intent = false
+message_content_intent = true
 guild_id = 123456789012345678
 panel_channel_id = 123456789012345678
 

@@ -18,6 +18,10 @@ from support_ticket_bot.config import BotSettings
 DISCORD_API_BASE = "https://discord.com/api/v10"
 DISCORD_AUTH_BASE = "https://discord.com/oauth2/authorize"
 OAUTH_SCOPES = ("identify", "guilds.members.read")
+DISCORD_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) DiscordTicketBotDashboard/1.0 Safari/537.36"
+)
 
 
 class DiscordOAuthError(RuntimeError):
@@ -187,7 +191,11 @@ async def exchange_code_for_token(settings: BotSettings, code: str) -> str:
             "code": code,
             "redirect_uri": settings.dashboard_discord_redirect_uri,
         },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://discord.com",
+            "Referer": "https://discord.com/",
+        },
     )
     access_token = payload.get("access_token")
     if not access_token:
@@ -221,7 +229,11 @@ async def _discord_request_json(
     headers: dict[str, str] | None = None,
     form_data: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    request_headers = {"Accept": "application/json"}
+    request_headers = {
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": DISCORD_HTTP_USER_AGENT,
+    }
     if headers:
         request_headers.update(headers)
     data = urlencode(form_data).encode("utf-8") if form_data else None
@@ -233,7 +245,7 @@ async def _discord_request_json(
                 body = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
-            raise DiscordOAuthError(f"Discord OAuth request failed ({exc.code}): {detail or exc.reason}") from exc
+            raise DiscordOAuthError(_format_http_error(exc.code, detail, exc.reason)) from exc
         except URLError as exc:
             raise DiscordOAuthError(f"Discord OAuth request failed: {exc.reason}") from exc
 
@@ -246,3 +258,27 @@ async def _discord_request_json(
         return parsed
 
     return await asyncio.to_thread(_run)
+
+
+def _format_http_error(status_code: int, detail: str, reason: str) -> str:
+    parsed: dict[str, Any] | None = None
+    try:
+        loaded = json.loads(detail)
+    except json.JSONDecodeError:
+        loaded = None
+    if isinstance(loaded, dict):
+        parsed = loaded
+
+    if parsed and parsed.get("cloudflare_error") and parsed.get("error_code") == 1010:
+        return (
+            "Discord blocked the dashboard's OAuth callback request. "
+            "The server was identified as an unsupported client signature. "
+            "The dashboard now sends browser-compatible headers; please try signing in again."
+        )
+
+    if parsed:
+        message = parsed.get("message") or parsed.get("detail") or parsed.get("title")
+        if message:
+            return f"Discord OAuth request failed ({status_code}): {message}"
+
+    return f"Discord OAuth request failed ({status_code}): {detail or reason}"

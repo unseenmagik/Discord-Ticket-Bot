@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
     setting_value TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
+APP_SETTINGS_TABLE_NAME = "app_settings"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -132,7 +133,8 @@ class TicketDatabase:
             charset=self.settings.db_charset,
             autocommit=True,
         )
-        await self.execute(APP_SETTINGS_TABLE_SQL)
+        if not await self._table_exists(APP_SETTINGS_TABLE_NAME):
+            await self.execute(APP_SETTINGS_TABLE_SQL)
 
     async def close(self) -> None:
         if self.pool is not None:
@@ -162,6 +164,18 @@ class TicketDatabase:
                 await cur.execute(query, params)
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
+
+    async def _table_exists(self, table_name: str) -> bool:
+        row = await self.fetchone(
+            """
+            SELECT 1 AS present
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+            LIMIT 1
+            """,
+            (self.settings.db_name, table_name),
+        )
+        return row is not None
 
     async def create_ticket(
         self,
@@ -320,9 +334,25 @@ class DashboardDatabase:
         )
 
     def ensure_app_settings_table(self) -> None:
+        if self._table_exists(APP_SETTINGS_TABLE_NAME):
+            return
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(APP_SETTINGS_TABLE_SQL)
+
+    def _table_exists(self, table_name: str) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1 AS present
+                    FROM information_schema.tables
+                    WHERE table_schema = %s AND table_name = %s
+                    LIMIT 1
+                    """,
+                    (self.settings.db_name, table_name),
+                )
+                return cur.fetchone() is not None
 
     def _ticket_access_filter_sql(
         self,

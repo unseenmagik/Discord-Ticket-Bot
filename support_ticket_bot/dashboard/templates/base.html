@@ -6,6 +6,7 @@
     <title>{{ title if title else 'Ticket Dashboard' }}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <style>
+        * { box-sizing: border-box; }
         body { font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }
         a { color: #93c5fd; text-decoration: none; }
         .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }
@@ -41,6 +42,7 @@
         .bar-fill { height:100%; background:linear-gradient(90deg, #2563eb, #60a5fa); border-radius:999px; }
         .bar-value { color:#d1d5db; font-variant-numeric:tabular-nums; }
         .notice { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#064e3b; color:#d1fae5; }
+        .error-box { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#7f1d1d; color:#fecaca; overflow-wrap:anywhere; }
         .muted { color:#9ca3af; }
         .help { font-size:0.92rem; color:#9ca3af; margin-top:-8px; margin-bottom:16px; }
         .inline-form { display:grid; grid-template-columns:minmax(220px, 1fr) minmax(220px, 1fr) auto; column-gap:24px; row-gap:16px; align-items:end; margin-top:8px; }
@@ -54,7 +56,7 @@
         .card-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:20px; }
         .card-header p { margin:0; }
         .summary-pill { display:inline-block; padding:10px 14px; border-radius:999px; background:#111827; border:1px solid #374151; color:#e5e7eb; white-space:nowrap; }
-        .discord-button { display:inline-flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:12px 16px; border-radius:10px; background:#5865F2; color:#fff; font-weight:700; }
+        .discord-button { display:inline-flex; align-items:center; justify-content:center; gap:10px; width:100%; max-width:100%; padding:12px 16px; border-radius:10px; background:#5865F2; color:#fff; font-weight:700; }
     </style>
 </head>
 <body>

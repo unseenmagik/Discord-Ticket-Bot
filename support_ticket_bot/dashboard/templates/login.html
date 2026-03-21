@@ -2,7 +2,7 @@
 {% block content %}
 <div class="login-box">
     <h1>Dashboard Login</h1>
-    {% if error %}<p style="color:#fca5a5;">{{ error }}</p>{% endif %}
+    {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
     <p class="muted">Sign in with Discord to view the tickets your account is allowed to access.</p>
     {% if oauth_configured %}
     <p><a class="discord-button" href="/auth/discord/start">Sign in with Discord</a></p>
