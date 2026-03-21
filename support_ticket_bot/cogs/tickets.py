@@ -55,7 +55,7 @@ class TicketsCog(commands.Cog):
             delete_after = self.bot.settings.interaction_delete_after_seconds
         try:
             if interaction.response.is_done():
-                await interaction.followup.send(content, ephemeral=True, delete_after=delete_after)
+                await interaction.followup.send(content, ephemeral=True)
             else:
                 await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
         except discord.NotFound:
