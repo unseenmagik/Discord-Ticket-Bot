@@ -4,7 +4,13 @@
 <p class="muted">A quick view of ticket volume, team activity, and older open work.</p>
 
 <div class="card">
-    <h2>Date range</h2>
+    <div class="card-header">
+        <div>
+            <h2 class="section-title">Date range</h2>
+            <p class="tight-muted">Choose a quick preset or run a custom date window.</p>
+        </div>
+        <div class="summary-pill">{{ filters.label }}</div>
+    </div>
     <div class="chip-row">
         <a class="chip {% if filters.selected == '7d' %}active{% endif %}" href="/stats?range=7d">Last 7 days</a>
         <a class="chip {% if filters.selected == '30d' %}active{% endif %}" href="/stats?range=30d">Last 30 days</a>
@@ -13,30 +19,19 @@
         <a class="chip {% if filters.selected == 'all' %}active{% endif %}" href="/stats?range=all">All time</a>
     </div>
     <form method="get" action="/stats" class="inline-form">
+        <input type="hidden" name="range" value="custom">
         <div>
-            <label for="range">Preset</label>
-            <select id="range" name="range">
-                <option value="7d" {% if filters.selected == '7d' %}selected{% endif %}>Last 7 days</option>
-                <option value="30d" {% if filters.selected == '30d' %}selected{% endif %}>Last 30 days</option>
-                <option value="90d" {% if filters.selected == '90d' %}selected{% endif %}>Last 90 days</option>
-                <option value="year" {% if filters.selected == 'year' %}selected{% endif %}>Year to date</option>
-                <option value="all" {% if filters.selected == 'all' %}selected{% endif %}>All time</option>
-                <option value="custom" {% if filters.selected == 'custom' %}selected{% endif %}>Custom</option>
-            </select>
-        </div>
-        <div>
-            <label for="start_date">Start date</label>
+            <label for="start_date">Custom start date</label>
             <input id="start_date" name="start_date" type="date" value="{{ filters.start_date }}">
         </div>
         <div>
-            <label for="end_date">End date</label>
+            <label for="end_date">Custom end date</label>
             <input id="end_date" name="end_date" type="date" value="{{ filters.end_date }}">
         </div>
         <div>
-            <button type="submit">Apply</button>
+            <button type="submit">Apply custom range</button>
         </div>
     </form>
-    <p class="muted">Showing activity for {{ filters.label }}.</p>
 </div>
 
 <div class="cards">
