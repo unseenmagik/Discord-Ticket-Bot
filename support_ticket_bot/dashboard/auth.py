@@ -222,13 +222,58 @@ async def fetch_discord_member_roles(access_token: str, guild_id: int) -> list[i
     return [int(role_id) for role_id in roles if str(role_id).isdigit()]
 
 
+async def fetch_guild_role_map(bot_token: str, guild_id: int) -> dict[int, str]:
+    payload = await _discord_request_json(
+        f"{DISCORD_API_BASE}/guilds/{guild_id}/roles",
+        headers={"Authorization": f"Bot {bot_token}"},
+    )
+    roles = payload.get("roles")
+    if not isinstance(roles, list):
+        if isinstance(payload, list):
+            roles = payload
+        else:
+            return {}
+
+    role_map: dict[int, str] = {}
+    for role in roles:
+        if not isinstance(role, dict):
+            continue
+        role_id = role.get("id")
+        role_name = role.get("name")
+        if role_id is None or role_name is None:
+            continue
+        try:
+            role_map[int(role_id)] = str(role_name)
+        except (TypeError, ValueError):
+            continue
+    return role_map
+
+
+async def fetch_member_display_map(bot_token: str, guild_id: int, user_ids: list[int]) -> dict[int, str]:
+    display_map: dict[int, str] = {}
+    for user_id in user_ids:
+        try:
+            payload = await _discord_request_json(
+                f"{DISCORD_API_BASE}/guilds/{guild_id}/members/{user_id}",
+                headers={"Authorization": f"Bot {bot_token}"},
+            )
+        except DiscordOAuthError:
+            continue
+
+        member_user = payload.get("user", {}) if isinstance(payload, dict) else {}
+        username = member_user.get("global_name") or payload.get("nick") or member_user.get("username")
+        if username:
+            display_map[user_id] = str(username)
+    return display_map
+
+
 async def _discord_request_json(
     url: str,
     *,
     method: str = "GET",
     headers: dict[str, str] | None = None,
     form_data: dict[str, str] | None = None,
-) -> dict[str, Any]:
+) -> Any:
     request_headers = {
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.9",
@@ -238,7 +283,7 @@ async def _discord_request_json(
         request_headers.update(headers)
     data = urlencode(form_data).encode("utf-8") if form_data else None
 
-    def _run() -> dict[str, Any]:
+    def _run() -> Any:
         request = Request(url, data=data, headers=request_headers, method=method)
         try:
             with urlopen(request, timeout=15) as response:
@@ -253,7 +298,7 @@ async def _discord_request_json(
             parsed = json.loads(body)
         except json.JSONDecodeError as exc:
             raise DiscordOAuthError("Discord returned invalid JSON.") from exc
-        if not isinstance(parsed, dict):
+        if not isinstance(parsed, (dict, list)):
             raise DiscordOAuthError("Discord returned an unexpected response.")
         return parsed
 

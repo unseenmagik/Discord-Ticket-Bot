@@ -24,6 +24,8 @@ from support_ticket_bot.dashboard.auth import (
     create_state_value,
     discord_oauth_configured,
     exchange_code_for_token,
+    fetch_guild_role_map,
+    fetch_member_display_map,
     fetch_discord_member_roles,
     fetch_discord_user,
     load_viewer_from_cookie,
@@ -86,7 +88,7 @@ def _queue_label_map(settings: BotSettings) -> dict[int, str]:
     return {channel_id: label for label, channel_id in settings.server_targets.items()}
 
 
-def _build_role_access_summary(settings: BotSettings) -> list[dict[str, object]]:
+def _build_role_access_summary(settings: BotSettings, role_name_map: dict[int, str]) -> list[dict[str, object]]:
     queue_labels = _queue_label_map(settings)
     rows: list[dict[str, object]] = []
 
@@ -95,6 +97,7 @@ def _build_role_access_summary(settings: BotSettings) -> list[dict[str, object]]
         rows.append(
             {
                 "role_id": role_id,
+                "role_name": role_name_map.get(role_id, "Unknown role"),
                 "access_scope": "Selected queues",
                 "queues": [
                     {
@@ -110,12 +113,40 @@ def _build_role_access_summary(settings: BotSettings) -> list[dict[str, object]]
         rows.append(
             {
                 "role_id": role_id,
+                "role_name": role_name_map.get(role_id, "Unknown role"),
                 "access_scope": "All tracked queues",
                 "queues": [],
             }
         )
 
     return rows
+
+
+async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object]]:
+    if not settings.dashboard_admin_user_ids:
+        return []
+    try:
+        name_map = await fetch_member_display_map(settings.token, settings.guild_id, settings.dashboard_admin_user_ids)
+    except DiscordOAuthError:
+        name_map = {}
+    return [
+        {
+            "user_id": user_id,
+            "display_name": name_map.get(user_id, "Unknown user"),
+        }
+        for user_id in sorted(settings.dashboard_admin_user_ids)
+    ]
+
+
+async def _build_access_summary_context(settings: BotSettings) -> dict[str, object]:
+    try:
+        role_name_map = await fetch_guild_role_map(settings.token, settings.guild_id)
+    except DiscordOAuthError:
+        role_name_map = {}
+    return {
+        "admin_user_rows": await _build_admin_user_rows(settings),
+        "role_access_rows": _build_role_access_summary(settings, role_name_map),
+    }
 
 
 def _log_dashboard_audit_event(
@@ -373,6 +404,7 @@ def create_app() -> FastAPI:
         settings: BotSettings = request.app.state.settings
         templates = db.get_message_templates()
         audit_events = db.list_audit_events(limit=40)
+        access_context = await _build_access_summary_context(settings)
         return TEMPLATES.TemplateResponse(
             "admin.html",
             _template_context(
@@ -380,8 +412,8 @@ def create_app() -> FastAPI:
                 viewer,
                 templates=templates,
                 saved=bool(saved),
-                admin_user_ids=settings.dashboard_admin_user_ids,
-                role_access_rows=_build_role_access_summary(settings),
+                admin_user_rows=access_context["admin_user_rows"],
+                role_access_rows=access_context["role_access_rows"],
                 audit_events=audit_events,
             ),
         )
