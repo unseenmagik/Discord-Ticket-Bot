@@ -7,6 +7,7 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 - Single pinned ticket panel with a **Create Ticket** button
 - Ephemeral server picker for pre-set server/admin options
 - Each ticket created as a **thread** in the mapped channel
+- **Ticket created DM** sent to the opener with the ticket name and Discord thread link
 - **Close Ticket** button inside the thread
 - **Reopen Ticket** and **Delete Now** buttons in the transcript log channel
 - **TXT and HTML transcripts**

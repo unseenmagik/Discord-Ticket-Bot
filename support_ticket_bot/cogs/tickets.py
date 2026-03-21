@@ -142,6 +142,47 @@ class TicketsCog(commands.Cog):
     async def _get_message_templates(self) -> dict[str, str]:
         return await self.bot.db.get_message_templates()
 
+    async def _resolve_ticket_user(self, user_id: int) -> discord.User | None:
+        user = self.bot.get_user(user_id)
+        if user is not None:
+            return user
+        try:
+            return await self.bot.fetch_user(user_id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            return None
+
+    def _thread_link(self, thread: discord.Thread) -> str:
+        jump_url = getattr(thread, "jump_url", None)
+        if jump_url:
+            return str(jump_url)
+        return f"https://discord.com/channels/{thread.guild.id}/{thread.id}"
+
+    async def _send_ticket_created_dm(
+        self,
+        *,
+        opener_id: int,
+        thread: discord.Thread,
+        server_label: str,
+    ) -> None:
+        user = await self._resolve_ticket_user(opener_id)
+        if user is None:
+            log.warning("Could not resolve ticket opener for created DM opener_id=%s", opener_id)
+            return
+
+        try:
+            await user.send(
+                "Your ticket has been created.\n"
+                f"Ticket name: {thread.name}\n"
+                f"Queue: {server_label}\n"
+                f"Open it here: {self._thread_link(thread)}"
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning(
+                "Failed to send ticket created DM for thread_id=%s opener_id=%s",
+                thread.id,
+                opener_id,
+            )
+
     async def _send_transcript_dm(self, ticket: dict, transcript_url: str | None) -> None:
         if not transcript_url:
             return
@@ -150,13 +191,10 @@ class TicketsCog(commands.Cog):
         if not opener_id:
             return
 
-        user = self.bot.get_user(opener_id)
+        user = await self._resolve_ticket_user(opener_id)
         if user is None:
-            try:
-                user = await self.bot.fetch_user(opener_id)
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                log.warning("Could not resolve ticket opener for transcript DM opener_id=%s", opener_id)
-                return
+            log.warning("Could not resolve ticket opener for transcript DM opener_id=%s", opener_id)
+            return
 
         try:
             await user.send(
@@ -270,6 +308,11 @@ class TicketsCog(commands.Cog):
         close_view = ThreadCloseView(self.bot, thread.id)
         self.bot.add_view(close_view)
         await thread.send(content=mentions or None, embed=embed, view=close_view)
+        await self._send_ticket_created_dm(
+            opener_id=interaction.user.id,
+            thread=thread,
+            server_label=chosen_label,
+        )
         log.info(
             "Ticket opened thread_id=%s guild_id=%s opener_id=%s server_label=%s target_channel_id=%s",
             thread.id,
