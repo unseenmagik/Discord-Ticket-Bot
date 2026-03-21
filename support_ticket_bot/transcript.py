@@ -305,6 +305,7 @@ async def generate_transcripts(
         txt_file = discord.File(txt_buffer, filename=f"{thread.name}.txt")
 
     if include_html:
+        exported_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         html_doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -315,10 +316,15 @@ async def generate_transcripts(
 * {{ box-sizing: border-box; }}
 body {{ font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }}
 a {{ color: #93c5fd; text-decoration: none; }}
+.topbar {{ display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }}
+.topbar-left {{ display:flex; align-items:center; gap:24px; }}
+.topnav {{ display:flex; gap:16px; }}
+.topnav a {{ color:#dbeafe; }}
 .page {{ max-width: 1200px; margin: 0 auto; padding: 24px; }}
-.header {{ background: #1f2937; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #374151; }}
-.header h1 {{ margin: 0 0 10px; }}
-.header p {{ margin: 6px 0; color: #9ca3af; }}
+.page-header {{ margin-bottom: 16px; }}
+.page-header h1 {{ margin: 0; font-size: 3rem; line-height: 1.1; }}
+.meta-card {{ background: #1f2937; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #374151; }}
+.meta-card p {{ margin: 6px 0; color: #9ca3af; }}
 .messages {{ display: grid; gap: 16px; }}
 .message {{ display: flex; gap: 14px; align-items: flex-start; }}
 .avatar {{ width: 44px; height: 44px; border-radius: 50%; flex: 0 0 44px; }}
@@ -349,12 +355,23 @@ a {{ color: #93c5fd; text-decoration: none; }}
 </style>
 </head>
 <body>
+<div class="topbar">
+    <div class="topbar-left">
+        <div><strong>Discord Ticket Transcript</strong></div>
+        <nav class="topnav">
+            <a href="#">Transcript</a>
+        </nav>
+    </div>
+</div>
 <div class="page">
-    <div class="header">
+    <div class="page-header">
         <h1>{html_escape(thread.name)}</h1>
+    </div>
+    <div class="meta-card">
         <p>Guild ID: {thread.guild.id}</p>
         <p>Thread ID: {thread.id}</p>
         <p>Archived at export: {'Yes' if thread.archived else 'No'}</p>
+        <p>Exported at: {exported_at}</p>
     </div>
     <div class="messages">
         {''.join(html_messages) if html_messages else '<div class="bubble">No messages in thread.</div>'}
