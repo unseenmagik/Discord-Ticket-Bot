@@ -25,6 +25,7 @@ class TranscriptBundle:
 MENTION_PATTERN = re.compile(r"<(@[!&]?|#)(\d+)>")
 CODE_BLOCK_PATTERN = re.compile(r"```(?:[a-zA-Z0-9_+-]+\n)?([\s\S]*?)```")
 INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
+URL_PATTERN = re.compile(r"(?P<url>https?://[^\s<]+)")
 
 
 class MentionResolver:
@@ -136,6 +137,11 @@ async def _render_discord_markup(value: str, resolver: MentionResolver) -> str:
     for pattern, replacement in rules:
         text = pattern.sub(replacement, text)
 
+    def _linkify(match: re.Match[str]) -> str:
+        url = match.group("url")
+        return f"<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>"
+
+    text = URL_PATTERN.sub(_linkify, text)
     text = text.replace("\n", "<br>")
     for token, rendered_html in placeholders.items():
         text = text.replace(token, rendered_html)
