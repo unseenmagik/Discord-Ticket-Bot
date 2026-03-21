@@ -152,7 +152,7 @@ def _resolve_stats_range(
     start_date_value: str | None,
     end_date_value: str | None,
 ) -> tuple[datetime | None, datetime | None, dict[str, str | None]]:
-    selected = range_key if range_key in STATS_RANGE_LABELS else "30d"
+    selected = range_key if range_key in STATS_RANGE_LABELS else "7d"
     today = datetime.now(timezone.utc).date()
 
     start_date = None
@@ -182,8 +182,8 @@ def _resolve_stats_range(
             start_date = parsed_end
             end_date = parsed_end
         else:
-            selected = "30d"
-            start_date = today - timedelta(days=29)
+            selected = "7d"
+            start_date = today - timedelta(days=6)
             end_date = today
 
     start_at = datetime.combine(start_date, time.min, tzinfo=timezone.utc) if start_date else None
