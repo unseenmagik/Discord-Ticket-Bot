@@ -6,9 +6,11 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from support_ticket_bot.config import BotSettings, load_settings
 from support_ticket_bot.dashboard.auth import (
@@ -29,7 +31,7 @@ from support_ticket_bot.dashboard.auth import (
 )
 from support_ticket_bot.db import DashboardDatabase
 from support_ticket_bot.transcript import TRANSCRIPTS_DIR
-from support_ticket_bot.utils import DEFAULT_MESSAGE_TEMPLATES
+from support_ticket_bot.utils import DEFAULT_MESSAGE_TEMPLATES, utc_now_iso
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -78,6 +80,62 @@ def _ticket_access_kwargs(viewer: DashboardViewer) -> dict[str, object]:
         "channel_ids": None if allow_all else viewer.allowed_channel_ids,
         "allow_all": allow_all,
     }
+
+
+def _queue_label_map(settings: BotSettings) -> dict[int, str]:
+    return {channel_id: label for label, channel_id in settings.server_targets.items()}
+
+
+def _build_role_access_summary(settings: BotSettings) -> list[dict[str, object]]:
+    queue_labels = _queue_label_map(settings)
+    rows: list[dict[str, object]] = []
+
+    for role_id in sorted(settings.dashboard_role_channel_access):
+        channel_ids = settings.dashboard_role_channel_access[role_id]
+        rows.append(
+            {
+                "role_id": role_id,
+                "access_scope": "Selected queues",
+                "queues": [
+                    {
+                        "channel_id": channel_id,
+                        "label": queue_labels.get(channel_id, "Unlabeled queue"),
+                    }
+                    for channel_id in channel_ids
+                ],
+            }
+        )
+
+    for role_id in sorted(settings.dashboard_role_full_access_ids):
+        rows.append(
+            {
+                "role_id": role_id,
+                "access_scope": "All tracked queues",
+                "queues": [],
+            }
+        )
+
+    return rows
+
+
+def _log_dashboard_audit_event(
+    request: Request,
+    *,
+    viewer: DashboardViewer,
+    event_type: str,
+    ticket_thread_id: int | None = None,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    db: DashboardDatabase = request.app.state.db
+    db.add_audit_event(
+        event_type=event_type,
+        actor_discord_user_id=viewer.discord_user_id,
+        actor_username=viewer.username,
+        actor_display_name=viewer.display_name,
+        ticket_thread_id=ticket_thread_id,
+        metadata=metadata,
+        created_at=utc_now_iso(),
+    )
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -153,6 +211,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.db = DashboardDatabase(settings)
     app.state.db.ensure_app_settings_table()
+    app.state.db.ensure_dashboard_audit_table()
     yield
 
 
@@ -161,6 +220,24 @@ def create_app() -> FastAPI:
     static_dir = BASE_DIR / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        viewer = load_viewer_from_cookie(
+            request.app.state.settings.dashboard_secret_key,
+            request.cookies.get(SESSION_COOKIE_NAME),
+        )
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            return TEMPLATES.TemplateResponse(
+                "403.html",
+                _template_context(
+                    request,
+                    viewer,
+                    message=getattr(exc, "detail", None) or "You do not have permission to access this page.",
+                ),
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        return await fastapi_http_exception_handler(request, exc)
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon():
@@ -235,6 +312,12 @@ def create_app() -> FastAPI:
             secure=cookie_should_be_secure(settings),
             max_age=60 * 60 * 24 * 7,
         )
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="dashboard_login",
+            metadata={"is_admin": viewer.is_admin, "has_global_ticket_access": viewer.has_global_ticket_access},
+        )
         response.delete_cookie(STATE_COOKIE_NAME)
         return response
 
@@ -287,7 +370,9 @@ def create_app() -> FastAPI:
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page(request: Request, saved: int = 0, viewer: DashboardViewer = Depends(require_admin)):
         db: DashboardDatabase = request.app.state.db
+        settings: BotSettings = request.app.state.settings
         templates = db.get_message_templates()
+        audit_events = db.list_audit_events(limit=40)
         return TEMPLATES.TemplateResponse(
             "admin.html",
             _template_context(
@@ -295,6 +380,9 @@ def create_app() -> FastAPI:
                 viewer,
                 templates=templates,
                 saved=bool(saved),
+                admin_user_ids=settings.dashboard_admin_user_ids,
+                role_access_rows=_build_role_access_summary(settings),
+                audit_events=audit_events,
             ),
         )
 
@@ -342,6 +430,13 @@ def create_app() -> FastAPI:
         transcript_path = TRANSCRIPTS_DIR / f"{thread_id}.html"
         if not transcript_path.exists():
             raise HTTPException(status_code=404, detail="Transcript not found")
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_transcript_view",
+            ticket_thread_id=thread_id,
+            metadata={"status": ticket.get("status"), "server_label": ticket.get("server_label")},
+        )
         return HTMLResponse(content=transcript_path.read_text(encoding="utf-8"))
 
     return app

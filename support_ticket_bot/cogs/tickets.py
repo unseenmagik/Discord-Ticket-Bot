@@ -142,6 +142,35 @@ class TicketsCog(commands.Cog):
     async def _get_message_templates(self) -> dict[str, str]:
         return await self.bot.db.get_message_templates()
 
+    async def _send_transcript_dm(self, ticket: dict, transcript_url: str | None) -> None:
+        if not transcript_url:
+            return
+
+        opener_id = ticket.get("opener_id")
+        if not opener_id:
+            return
+
+        user = self.bot.get_user(opener_id)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(opener_id)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                log.warning("Could not resolve ticket opener for transcript DM opener_id=%s", opener_id)
+                return
+
+        try:
+            await user.send(
+                "Your ticket has been closed.\n"
+                f"You can view the transcript here: {transcript_url}\n"
+                "If prompted, sign in to the dashboard with Discord to open it."
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning(
+                "Failed to send transcript DM for thread_id=%s opener_id=%s",
+                ticket.get("thread_id"),
+                opener_id,
+            )
+
     async def _user_can_manage_ticket(
         self,
         interaction: discord.Interaction,
@@ -321,6 +350,7 @@ class TicketsCog(commands.Cog):
             log_message_id=log_message_id,
             transcript_message_url=transcript_message_url,
         )
+        await self._send_transcript_dm(ticket, transcript_message_url)
         try:
             await thread.send(f"Ticket closed by {interaction.user.mention}.")
         except discord.HTTPException:

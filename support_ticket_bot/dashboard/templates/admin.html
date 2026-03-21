@@ -7,6 +7,95 @@
 <div class="notice">Message templates saved. New panels and new tickets will use the updated text.</div>
 {% endif %}
 
+<div class="split">
+    <div class="card">
+        <h2>Dashboard Access</h2>
+        <p class="muted">Admins can see every dashboard page. Non-admins can still see their own tickets, plus queue access granted by configured Discord roles.</p>
+
+        <h3>Admin user IDs</h3>
+        {% if admin_user_ids %}
+        <div class="bar-list">
+            {% for admin_user_id in admin_user_ids %}
+            <div><code>{{ admin_user_id }}</code></div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted">No dashboard admins are configured yet.</p>
+        {% endif %}
+
+        <h3>Role-based queue access</h3>
+        {% if role_access_rows %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Role ID</th>
+                    <th>Scope</th>
+                    <th>Queues</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in role_access_rows %}
+                <tr>
+                    <td><code>{{ row.role_id }}</code></td>
+                    <td>{{ row.access_scope }}</td>
+                    <td>
+                        {% if row.queues %}
+                            {% for queue in row.queues %}
+                                <div>{{ queue.label }} (<code>{{ queue.channel_id }}</code>)</div>
+                            {% endfor %}
+                        {% else %}
+                        All tracked queues
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No role-based queue visibility rules are configured.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Recent Dashboard Audit</h2>
+        <p class="muted">Successful dashboard logins and transcript views are recorded here.</p>
+        {% if audit_events %}
+        <table>
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Event</th>
+                    <th>User</th>
+                    <th>Ticket</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in audit_events %}
+                <tr>
+                    <td>{{ event.created_at }}</td>
+                    <td>{{ event.event_type }}</td>
+                    <td>{{ event.actor_display_name }} (<code>{{ event.actor_discord_user_id }}</code>)</td>
+                    <td>{% if event.ticket_thread_id %}<a href="/tickets/{{ event.ticket_thread_id }}">{{ event.ticket_thread_id }}</a>{% else %}—{% endif %}</td>
+                    <td>
+                        {% if event.metadata %}
+                            {% for key, value in event.metadata.items() %}
+                            <div><strong>{{ key }}:</strong> {{ value }}</div>
+                            {% endfor %}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No dashboard audit events have been recorded yet.</p>
+        {% endif %}
+    </div>
+</div>
+
 <div class="card">
     <form method="post" action="/admin/messages">
         <h2>Ticket Panel</h2>

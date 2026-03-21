@@ -10,6 +10,7 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 - **Close Ticket** button inside the thread
 - **Reopen Ticket** and **Delete Now** buttons in the transcript log channel
 - **TXT and HTML transcripts**
+- **Transcript DM** sent to the ticket opener when a ticket is closed
 - **MariaDB / MySQL** storage instead of SQLite
 - **FastAPI web dashboard** for stats and ticket browsing
 - **Auto-delete** for closed threads after a configurable delay
@@ -229,6 +230,7 @@ Inside the WebUI you can:
 - Open an individual ticket detail page by clicking `Open`
 - Open the saved HTML transcript for a closed ticket directly in your browser
 - If your Discord user is listed in `admin_user_ids`, also access the full `Stats` and `Admin` pages
+- If you are denied access to an admin-only page, the dashboard now shows a friendly `403` page instead of a raw framework error
 
 ## Admin page
 
@@ -238,6 +240,8 @@ The dashboard `Admin` page lets you change:
 - The ticket panel description
 - The initial thread message title
 - The initial thread message description
+- Review configured admin user IDs and role-based queue visibility rules
+- Review recent dashboard audit events such as successful logins and transcript views
 
 These changes apply to new ticket panels and new tickets after they are saved.
 
@@ -283,6 +287,7 @@ If your bot is running on a remote server, keep `host = 127.0.0.1` if you only w
 - The dashboard uses FastAPI and server-rendered templates for the login page, overview page, stats page, admin page, and individual ticket detail pages.
 - Discord OAuth requires a redirect URI in the Discord Developer Portal that exactly matches `discord_redirect_uri` in `config.ini`.
 - The dashboard requests the `identify` and `guilds.members.read` OAuth scopes so it can identify the user and read their roles in the configured guild.
+- Successful dashboard logins and transcript views are written to the `dashboard_audit_log` table and shown on the `Admin` page.
 - Closed ticket log messages can link back to the dashboard using the `base_url` configured in `[dashboard]`.
 - The bot stores ticket data in MariaDB/MySQL, and the dashboard reads from the same database to display ticket history and statistics.
 - Full transcript message text requires the Discord Message Content Intent to be enabled both in `config.ini` and in the Discord Developer Portal.

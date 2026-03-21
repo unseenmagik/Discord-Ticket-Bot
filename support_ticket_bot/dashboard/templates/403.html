@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="login-box">
+    <h1>Access Denied</h1>
+    <div class="error-box">{{ message }}</div>
+    <p class="muted">Your Discord account is signed in, but it does not have permission to open this page.</p>
+    {% if viewer %}
+    <p><a class="discord-button" href="/">Return to dashboard</a></p>
+    {% else %}
+    <p><a class="discord-button" href="/login">Back to login</a></p>
+    {% endif %}
+</div>
+{% endblock %}

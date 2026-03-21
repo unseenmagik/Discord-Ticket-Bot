@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -17,6 +18,22 @@ CREATE TABLE IF NOT EXISTS app_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 APP_SETTINGS_TABLE_NAME = "app_settings"
+AUDIT_LOG_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS dashboard_audit_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_type VARCHAR(100) NOT NULL,
+    actor_discord_user_id BIGINT NOT NULL,
+    actor_username VARCHAR(255) NOT NULL,
+    actor_display_name VARCHAR(255) NOT NULL,
+    ticket_thread_id BIGINT NULL,
+    metadata_json TEXT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    INDEX idx_dashboard_audit_created_at (created_at),
+    INDEX idx_dashboard_audit_actor (actor_discord_user_id),
+    INDEX idx_dashboard_audit_event_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+AUDIT_LOG_TABLE_NAME = "dashboard_audit_log"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -135,6 +152,8 @@ class TicketDatabase:
         )
         if not await self._table_exists(APP_SETTINGS_TABLE_NAME):
             await self.execute(APP_SETTINGS_TABLE_SQL)
+        if not await self._table_exists(AUDIT_LOG_TABLE_NAME):
+            await self.execute(AUDIT_LOG_TABLE_SQL)
 
     async def close(self) -> None:
         if self.pool is not None:
@@ -340,6 +359,13 @@ class DashboardDatabase:
             with conn.cursor() as cur:
                 cur.execute(APP_SETTINGS_TABLE_SQL)
 
+    def ensure_dashboard_audit_table(self) -> None:
+        if self._table_exists(AUDIT_LOG_TABLE_NAME):
+            return
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(AUDIT_LOG_TABLE_SQL)
+
     def _table_exists(self, table_name: str) -> bool:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -493,6 +519,69 @@ class DashboardDatabase:
                         """,
                         (key, value),
                     )
+
+    def add_audit_event(
+        self,
+        *,
+        event_type: str,
+        actor_discord_user_id: int,
+        actor_username: str,
+        actor_display_name: str,
+        ticket_thread_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> None:
+        self.ensure_dashboard_audit_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO dashboard_audit_log (
+                        event_type,
+                        actor_discord_user_id,
+                        actor_username,
+                        actor_display_name,
+                        ticket_thread_id,
+                        metadata_json,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        event_type,
+                        actor_discord_user_id,
+                        actor_username,
+                        actor_display_name,
+                        ticket_thread_id,
+                        json.dumps(metadata, sort_keys=True) if metadata else None,
+                        created_at,
+                    ),
+                )
+
+    def list_audit_events(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        self.ensure_dashboard_audit_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM dashboard_audit_log
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = list(cur.fetchall())
+
+        for row in rows:
+            metadata_json = row.get("metadata_json")
+            if metadata_json:
+                try:
+                    row["metadata"] = json.loads(metadata_json)
+                except json.JSONDecodeError:
+                    row["metadata"] = {"raw": metadata_json}
+            else:
+                row["metadata"] = {}
+        return rows
 
     def get_ticket_analytics(
         self,
