@@ -53,7 +53,15 @@ class TicketsCog(commands.Cog):
     async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
         if delete_after is None:
             delete_after = self.bot.settings.interaction_delete_after_seconds
-        await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(content, ephemeral=True, delete_after=delete_after)
+            else:
+                await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
+        except discord.NotFound:
+            log.warning("Interaction expired before a reply could be sent.")
+        except discord.HTTPException:
+            log.exception("Failed to send interaction reply.")
 
     async def _find_thread_control_message(self, thread: discord.Thread, thread_id: int) -> discord.Message | None:
         close_custom_id = f"ticket:close:{thread_id}"
@@ -248,6 +256,11 @@ class TicketsCog(commands.Cog):
         if target_channel is None or not isinstance(target_channel, discord.TextChannel):
             await self._reply(interaction, "The configured destination channel is invalid.")
             return
+
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.HTTPException:
+            log.warning("Failed to defer ticket creation interaction for user_id=%s", interaction.user.id)
 
         seed_message = await target_channel.send(f"New ticket request from {interaction.user.mention} for **{chosen_label}**")
         thread_name = (
