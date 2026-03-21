@@ -3,12 +3,48 @@
 <h1>Stats</h1>
 <p class="muted">A quick view of ticket volume, team activity, and older open work.</p>
 
+<div class="card">
+    <h2>Date range</h2>
+    <div class="chip-row">
+        <a class="chip {% if filters.selected == '7d' %}active{% endif %}" href="/stats?range=7d">Last 7 days</a>
+        <a class="chip {% if filters.selected == '30d' %}active{% endif %}" href="/stats?range=30d">Last 30 days</a>
+        <a class="chip {% if filters.selected == '90d' %}active{% endif %}" href="/stats?range=90d">Last 90 days</a>
+        <a class="chip {% if filters.selected == 'year' %}active{% endif %}" href="/stats?range=year">Year to date</a>
+        <a class="chip {% if filters.selected == 'all' %}active{% endif %}" href="/stats?range=all">All time</a>
+    </div>
+    <form method="get" action="/stats" class="inline-form">
+        <div>
+            <label for="range">Preset</label>
+            <select id="range" name="range">
+                <option value="7d" {% if filters.selected == '7d' %}selected{% endif %}>Last 7 days</option>
+                <option value="30d" {% if filters.selected == '30d' %}selected{% endif %}>Last 30 days</option>
+                <option value="90d" {% if filters.selected == '90d' %}selected{% endif %}>Last 90 days</option>
+                <option value="year" {% if filters.selected == 'year' %}selected{% endif %}>Year to date</option>
+                <option value="all" {% if filters.selected == 'all' %}selected{% endif %}>All time</option>
+                <option value="custom" {% if filters.selected == 'custom' %}selected{% endif %}>Custom</option>
+            </select>
+        </div>
+        <div>
+            <label for="start_date">Start date</label>
+            <input id="start_date" name="start_date" type="date" value="{{ filters.start_date }}">
+        </div>
+        <div>
+            <label for="end_date">End date</label>
+            <input id="end_date" name="end_date" type="date" value="{{ filters.end_date }}">
+        </div>
+        <div>
+            <button type="submit">Apply</button>
+        </div>
+    </form>
+    <p class="muted">Showing activity for {{ filters.label }}.</p>
+</div>
+
 <div class="cards">
-    <div class="card"><div class="label">Created today</div><div class="value">{{ analytics.tickets_today }}</div></div>
-    <div class="card"><div class="label">This week</div><div class="value">{{ analytics.tickets_this_week }}</div></div>
-    <div class="card"><div class="label">This month</div><div class="value">{{ analytics.tickets_this_month }}</div></div>
-    <div class="card"><div class="label">This year</div><div class="value">{{ analytics.tickets_this_year }}</div></div>
-    <div class="card"><div class="label">Open now</div><div class="value">{{ stats.open }}</div></div>
+    <div class="card"><div class="label">Opened in range</div><div class="value">{{ analytics.opened_count }}</div></div>
+    <div class="card"><div class="label">Closed in range</div><div class="value">{{ analytics.closed_count }}</div></div>
+    <div class="card"><div class="label">Reopened in range</div><div class="value">{{ analytics.reopened_count }}</div></div>
+    <div class="card"><div class="label">Deleted in range</div><div class="value">{{ analytics.deleted_count }}</div></div>
+    <div class="card"><div class="label">Still open</div><div class="value">{{ analytics.open_count }}</div></div>
     <div class="card"><div class="label">Avg close time</div><div class="value">{{ analytics.average_close_hours if analytics.average_close_hours is not none else '—' }}{% if analytics.average_close_hours is not none %}h{% endif %}</div></div>
 </div>
 
@@ -96,10 +132,10 @@
     </div>
 
     <div class="card">
-        <h2>Last 30 days</h2>
-        {% if analytics.daily_created %}
+        <h2>Opened over time</h2>
+        {% if analytics.trend_points %}
         <div class="bar-list">
-            {% for row in analytics.daily_created %}
+            {% for row in analytics.trend_points %}
             <div class="bar-row">
                 <div class="bar-label">{{ row.label }}</div>
                 <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
