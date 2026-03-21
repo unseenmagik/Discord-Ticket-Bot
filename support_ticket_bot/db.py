@@ -557,7 +557,15 @@ class DashboardDatabase:
                     ),
                 )
 
-    def list_audit_events(self, *, limit: int = 50) -> list[dict[str, Any]]:
+    def count_audit_events(self) -> int:
+        self.ensure_dashboard_audit_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS c FROM dashboard_audit_log")
+                row = cur.fetchone()
+        return int(row["c"]) if row else 0
+
+    def list_audit_events(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         self.ensure_dashboard_audit_table()
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -566,9 +574,9 @@ class DashboardDatabase:
                     SELECT *
                     FROM dashboard_audit_log
                     ORDER BY created_at DESC
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,
-                    (limit,),
+                    (limit, offset),
                 )
                 rows = list(cur.fetchall())
 

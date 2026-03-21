@@ -47,6 +47,7 @@ STATS_RANGE_LABELS = {
     "all": "All time",
     "custom": "Custom range",
 }
+AUDIT_PAGE_SIZE = 5
 
 
 def _template_context(request: Request, viewer: DashboardViewer | None, **extra: object) -> dict[str, object]:
@@ -399,11 +400,19 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/admin", response_class=HTMLResponse)
-    async def admin_page(request: Request, saved: int = 0, viewer: DashboardViewer = Depends(require_admin)):
+    async def admin_page(
+        request: Request,
+        saved: int = 0,
+        audit_page: int = 1,
+        viewer: DashboardViewer = Depends(require_admin),
+    ):
         db: DashboardDatabase = request.app.state.db
         settings: BotSettings = request.app.state.settings
         templates = db.get_message_templates()
-        audit_events = db.list_audit_events(limit=40)
+        total_audit_events = db.count_audit_events()
+        total_audit_pages = max(1, (total_audit_events + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE)
+        audit_page = min(max(audit_page, 1), total_audit_pages)
+        audit_events = db.list_audit_events(limit=AUDIT_PAGE_SIZE, offset=(audit_page - 1) * AUDIT_PAGE_SIZE)
         access_context = await _build_access_summary_context(settings)
         return TEMPLATES.TemplateResponse(
             "admin.html",
@@ -415,6 +424,13 @@ def create_app() -> FastAPI:
                 admin_user_rows=access_context["admin_user_rows"],
                 role_access_rows=access_context["role_access_rows"],
                 audit_events=audit_events,
+                audit_page=audit_page,
+                audit_total_pages=total_audit_pages,
+                audit_total_events=total_audit_events,
+                audit_has_prev=audit_page > 1,
+                audit_has_next=audit_page < total_audit_pages,
+                audit_prev_page=audit_page - 1,
+                audit_next_page=audit_page + 1,
             ),
         )
 

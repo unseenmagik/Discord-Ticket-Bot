@@ -119,6 +119,22 @@
                 </tbody>
             </table>
         </div>
+        <div class="pagination">
+            <div class="muted">Showing {{ audit_events|length }} of {{ audit_total_events }} audit log entries</div>
+            <div class="pagination-links">
+                {% if audit_has_prev %}
+                <a class="pagination-link" href="/admin?audit_page={{ audit_prev_page }}{% if saved %}&saved=1{% endif %}">Previous</a>
+                {% else %}
+                <span class="pagination-link disabled">Previous</span>
+                {% endif %}
+                <span class="muted">Page {{ audit_page }} of {{ audit_total_pages }}</span>
+                {% if audit_has_next %}
+                <a class="pagination-link" href="/admin?audit_page={{ audit_next_page }}{% if saved %}&saved=1{% endif %}">Next</a>
+                {% else %}
+                <span class="pagination-link disabled">Next</span>
+                {% endif %}
+            </div>
+        </div>
         {% else %}
         <p class="muted">No dashboard audit events have been recorded yet.</p>
         {% endif %}
