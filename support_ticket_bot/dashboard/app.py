@@ -84,6 +84,21 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.get("/stats", response_class=HTMLResponse)
+    async def stats_page(request: Request, user: str = Depends(require_login)):
+        db: DashboardDatabase = request.app.state.db
+        stats = db.get_stats()
+        analytics = db.get_ticket_analytics()
+        return TEMPLATES.TemplateResponse(
+            "stats.html",
+            {
+                "request": request,
+                "stats": stats,
+                "analytics": analytics,
+                "user": user,
+            },
+        )
+
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page(request: Request, saved: int = 0, user: str = Depends(require_login)):
         db: DashboardDatabase = request.app.state.db
@@ -115,9 +130,7 @@ def create_app() -> FastAPI:
             "thread_embed_description": thread_embed_description.strip()
             or DEFAULT_MESSAGE_TEMPLATES["thread_embed_description"],
         }
-        db.set_message_templates(
-            values
-        )
+        db.set_message_templates(values)
         return RedirectResponse(url="/admin?saved=1", status_code=303)
 
     @app.get("/tickets/{thread_id}", response_class=HTMLResponse)

@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Stats</h1>
+<p class="muted">A quick view of ticket volume, team activity, and older open work.</p>
+
+<div class="cards">
+    <div class="card"><div class="label">Created today</div><div class="value">{{ analytics.tickets_today }}</div></div>
+    <div class="card"><div class="label">This week</div><div class="value">{{ analytics.tickets_this_week }}</div></div>
+    <div class="card"><div class="label">This month</div><div class="value">{{ analytics.tickets_this_month }}</div></div>
+    <div class="card"><div class="label">This year</div><div class="value">{{ analytics.tickets_this_year }}</div></div>
+    <div class="card"><div class="label">Open now</div><div class="value">{{ stats.open }}</div></div>
+    <div class="card"><div class="label">Avg close time</div><div class="value">{{ analytics.average_close_hours if analytics.average_close_hours is not none else '—' }}{% if analytics.average_close_hours is not none %}h{% endif %}</div></div>
+</div>
+
+<div class="stack">
+    <div class="split">
+        <div class="card">
+            <h2>Last 30 days</h2>
+            {% if analytics.daily_created %}
+            <div class="bar-list">
+                {% for row in analytics.daily_created %}
+                <div class="bar-row">
+                    <div class="bar-label">{{ row.label }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                    <div class="bar-value">{{ row.count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="muted">No ticket data yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>Tickets by server</h2>
+            {% if analytics.by_server %}
+            <div class="bar-list">
+                {% for row in analytics.by_server %}
+                <div class="bar-row">
+                    <div class="bar-label">{{ row.label }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ row.width_pct }}%;"></div></div>
+                    <div class="bar-value">{{ row.count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="muted">No server data yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="split">
+        <div class="card">
+            <h2>Top ticket creators</h2>
+            {% if analytics.top_openers %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Tickets opened</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in analytics.top_openers %}
+                    <tr>
+                        <td>{{ row.label }}</td>
+                        <td>{{ row.count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No opener activity yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>Top staff closers</h2>
+            {% if analytics.top_closers %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Tickets closed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in analytics.top_closers %}
+                    <tr>
+                        <td>{{ row.label }}</td>
+                        <td>{{ row.count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">No close activity yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Oldest open tickets</h2>
+        {% if analytics.oldest_open %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Thread ID</th>
+                    <th>Server</th>
+                    <th>Opened by</th>
+                    <th>Created at</th>
+                    <th>Age (hours)</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ticket in analytics.oldest_open %}
+                <tr>
+                    <td>{{ ticket.thread_id }}</td>
+                    <td>{{ ticket.server_label }}</td>
+                    <td>{{ ticket.opener_name }}</td>
+                    <td>{{ ticket.created_at }}</td>
+                    <td>{{ ticket.age_hours }}</td>
+                    <td><a href="/tickets/{{ ticket.thread_id }}">Open</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No open tickets right now.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
