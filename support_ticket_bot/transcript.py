@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
 import re
+from typing import Any
 
 import discord
 
@@ -26,41 +27,70 @@ CODE_BLOCK_PATTERN = re.compile(r"```(?:[a-zA-Z0-9_+-]+\n)?([\s\S]*?)```")
 INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
 
 
-def _resolve_mention_label(guild: discord.Guild | None, mention_type: str, entity_id: int) -> str:
-    if mention_type in {"@", "@!"}:
-        member = guild.get_member(entity_id) if guild else None
-        if member is not None:
-            return f"@{member.display_name}"
-        return f"@user-{entity_id}"
+class MentionResolver:
+    def __init__(self, guild: discord.Guild | None):
+        self.guild = guild
+        self.user_cache: dict[int, str] = {}
+        self.role_cache: dict[int, str] = {}
+        self.channel_cache: dict[int, str] = {}
 
-    if mention_type == "@&":
-        role = guild.get_role(entity_id) if guild else None
-        if role is not None:
-            return f"@{role.name}"
-        return f"@role-{entity_id}"
+    async def resolve_label(self, mention_type: str, entity_id: int) -> str:
+        if mention_type in {"@", "@!"}:
+            if entity_id in self.user_cache:
+                return self.user_cache[entity_id]
 
-    if mention_type == "#":
-        if guild is not None:
-            channel_getter = getattr(guild, "get_channel_or_thread", None)
-            channel = channel_getter(entity_id) if callable(channel_getter) else guild.get_channel(entity_id)
-            if channel is not None:
-                return f"#{channel.name}"
-        return f"#channel-{entity_id}"
+            member = self.guild.get_member(entity_id) if self.guild else None
+            if member is None and self.guild is not None:
+                try:
+                    member = await self.guild.fetch_member(entity_id)
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    member = None
 
-    return str(entity_id)
+            label = f"@{member.display_name}" if member is not None else f"@user-{entity_id}"
+            self.user_cache[entity_id] = label
+            return label
+
+        if mention_type == "@&":
+            if entity_id in self.role_cache:
+                return self.role_cache[entity_id]
+
+            role = self.guild.get_role(entity_id) if self.guild else None
+            label = f"@{role.name}" if role is not None else f"@role-{entity_id}"
+            self.role_cache[entity_id] = label
+            return label
+
+        if mention_type == "#":
+            if entity_id in self.channel_cache:
+                return self.channel_cache[entity_id]
+
+            channel = None
+            if self.guild is not None:
+                channel_getter = getattr(self.guild, "get_channel_or_thread", None)
+                channel = channel_getter(entity_id) if callable(channel_getter) else self.guild.get_channel(entity_id)
+            label = f"#{channel.name}" if channel is not None else f"#channel-{entity_id}"
+            self.channel_cache[entity_id] = label
+            return label
+
+        return str(entity_id)
 
 
-def _replace_discord_mentions(value: str, guild: discord.Guild | None) -> str:
-    def _replacement(match: re.Match[str]) -> str:
+async def _replace_discord_mentions(value: str, resolver: MentionResolver) -> str:
+    parts: list[str] = []
+    last_index = 0
+
+    for match in MENTION_PATTERN.finditer(value):
+        parts.append(value[last_index:match.start()])
         mention_type = match.group(1)
         entity_id = int(match.group(2))
-        return _resolve_mention_label(guild, mention_type, entity_id)
+        parts.append(await resolver.resolve_label(mention_type, entity_id))
+        last_index = match.end()
 
-    return MENTION_PATTERN.sub(_replacement, value)
+    parts.append(value[last_index:])
+    return "".join(parts)
 
 
-def _strip_discord_markup(value: str, guild: discord.Guild | None) -> str:
-    text = _replace_discord_mentions(value, guild)
+async def _strip_discord_markup(value: str, resolver: MentionResolver) -> str:
+    text = await _replace_discord_mentions(value, resolver)
     text = CODE_BLOCK_PATTERN.sub(lambda match: match.group(1).strip("\n"), text)
     text = INLINE_CODE_PATTERN.sub(lambda match: match.group(1), text)
     replacements = [
@@ -75,8 +105,8 @@ def _strip_discord_markup(value: str, guild: discord.Guild | None) -> str:
     return text
 
 
-def _render_discord_markup(value: str, guild: discord.Guild | None) -> str:
-    text = _replace_discord_mentions(value, guild)
+async def _render_discord_markup(value: str, resolver: MentionResolver) -> str:
+    text = await _replace_discord_mentions(value, resolver)
     placeholders: dict[str, str] = {}
 
     def _store_placeholder(prefix: str, rendered_html: str) -> str:
@@ -113,7 +143,7 @@ def _render_discord_markup(value: str, guild: discord.Guild | None) -> str:
 
 
 def _message_content(message: discord.Message) -> str:
-    content = getattr(message, "clean_content", "") or message.content or ""
+    content = message.content or getattr(message, "clean_content", "") or ""
     if content:
         return content
 
@@ -124,53 +154,53 @@ def _message_content(message: discord.Message) -> str:
     reference = getattr(message, "reference", None)
     resolved = getattr(reference, "resolved", None)
     if isinstance(resolved, discord.Message):
-        referenced_content = getattr(resolved, "clean_content", "") or resolved.content or ""
+        referenced_content = resolved.content or getattr(resolved, "clean_content", "") or ""
         if referenced_content:
             return f"[Thread starter] {referenced_content}"
 
     return ""
 
 
-def _embed_text(embed: discord.Embed, guild: discord.Guild | None) -> str:
+async def _embed_text(embed: discord.Embed, resolver: MentionResolver) -> str:
     parts: list[str] = []
 
     if embed.title:
-        parts.append(f"Title: {_strip_discord_markup(embed.title, guild)}")
+        parts.append(f"Title: {await _strip_discord_markup(embed.title, resolver)}")
     if embed.description:
-        parts.append(f"Description: {_strip_discord_markup(embed.description, guild)}")
+        parts.append(f"Description: {await _strip_discord_markup(embed.description, resolver)}")
     if embed.author and embed.author.name:
-        parts.append(f"Author: {_strip_discord_markup(embed.author.name, guild)}")
+        parts.append(f"Author: {await _strip_discord_markup(embed.author.name, resolver)}")
     for field in embed.fields:
         parts.append(
-            f"{_strip_discord_markup(field.name, guild)}: {_strip_discord_markup(field.value, guild)}"
+            f"{await _strip_discord_markup(field.name, resolver)}: {await _strip_discord_markup(field.value, resolver)}"
         )
     if embed.footer and embed.footer.text:
-        parts.append(f"Footer: {_strip_discord_markup(embed.footer.text, guild)}")
+        parts.append(f"Footer: {await _strip_discord_markup(embed.footer.text, resolver)}")
 
     return "\n".join(parts)
 
 
-def _embed_html(embed: discord.Embed, guild: discord.Guild | None) -> str:
+async def _embed_html(embed: discord.Embed, resolver: MentionResolver) -> str:
     parts: list[str] = []
 
     if embed.title:
-        parts.append(f"<div class='embed-title'>{_render_discord_markup(embed.title, guild)}</div>")
+        parts.append(f"<div class='embed-title'>{await _render_discord_markup(embed.title, resolver)}</div>")
     if embed.description:
-        parts.append(f"<div class='embed-description'>{_render_discord_markup(embed.description, guild)}</div>")
+        parts.append(f"<div class='embed-description'>{await _render_discord_markup(embed.description, resolver)}</div>")
     if embed.author and embed.author.name:
-        parts.append(f"<div class='embed-author'>Author: {_render_discord_markup(embed.author.name, guild)}</div>")
+        parts.append(f"<div class='embed-author'>Author: {await _render_discord_markup(embed.author.name, resolver)}</div>")
     if embed.fields:
         field_items = []
         for field in embed.fields:
             field_items.append(
                 "<div class='embed-field'>"
-                f"<div class='embed-field-name'>{_render_discord_markup(field.name, guild)}</div>"
-                f"<div class='embed-field-value'>{_render_discord_markup(field.value, guild)}</div>"
+                f"<div class='embed-field-name'>{await _render_discord_markup(field.name, resolver)}</div>"
+                f"<div class='embed-field-value'>{await _render_discord_markup(field.value, resolver)}</div>"
                 "</div>"
             )
         parts.append("<div class='embed-fields'>" + "".join(field_items) + "</div>")
     if embed.footer and embed.footer.text:
-        parts.append(f"<div class='embed-footer'>{_render_discord_markup(embed.footer.text, guild)}</div>")
+        parts.append(f"<div class='embed-footer'>{await _render_discord_markup(embed.footer.text, resolver)}</div>")
 
     if not parts:
         parts.append("<div class='embed-note'>Embed attached</div>")
@@ -178,22 +208,45 @@ def _embed_html(embed: discord.Embed, guild: discord.Guild | None) -> str:
     return "<div class='embed-block'>" + "".join(parts) + "</div>"
 
 
-def _message_block(message: discord.Message) -> str:
+def _is_image_attachment(attachment: discord.Attachment) -> bool:
+    content_type = (attachment.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return True
+    filename = attachment.filename.lower()
+    return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
+
+
+def _attachment_html(attachment: discord.Attachment) -> str:
+    safe_name = html_escape(attachment.filename)
+    safe_url = html_escape(attachment.url)
+    if _is_image_attachment(attachment):
+        return (
+            "<div class='attachment attachment-image-wrap'>"
+            f"<a href='{safe_url}' target='_blank' rel='noopener noreferrer'>"
+            f"<img class='attachment-image' src='{safe_url}' alt='{safe_name}'>"
+            "</a>"
+            f"<div class='attachment-caption'><a href='{safe_url}' target='_blank' rel='noopener noreferrer'>{safe_name}</a></div>"
+            "</div>"
+        )
+    return (
+        "<div class='attachment attachment-file'>"
+        f"<a href='{safe_url}' target='_blank' rel='noopener noreferrer'>{safe_name}</a>"
+        "</div>"
+    )
+
+
+async def _message_block(message: discord.Message, resolver: MentionResolver) -> str:
     created = message.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     author = html_escape(str(message.author))
-    content = _render_discord_markup(_message_content(message), message.guild)
+    content = await _render_discord_markup(_message_content(message), resolver)
     avatar = message.author.display_avatar.url
 
     attachment_html = ""
     if message.attachments:
-        items = []
-        for att in message.attachments:
-            safe_name = html_escape(att.filename)
-            safe_url = html_escape(att.url)
-            items.append(f'<li><a href="{safe_url}" target="_blank">{safe_name}</a></li>')
-        attachment_html = "<div class='attachments'><strong>Attachments</strong><ul>" + "".join(items) + "</ul></div>"
+        items = "".join(_attachment_html(att) for att in message.attachments)
+        attachment_html = "<div class='attachments'><strong>Attachments</strong>" + items + "</div>"
 
-    embed_html = "".join(_embed_html(embed, message.guild) for embed in message.embeds)
+    embed_html = "".join([await _embed_html(embed, resolver) for embed in message.embeds])
 
     return f"""
     <div class='message'>
@@ -219,21 +272,27 @@ async def generate_transcripts(
 ) -> TranscriptBundle:
     lines: list[str] = []
     html_messages: list[str] = []
+    resolver = MentionResolver(thread.guild)
 
     async for message in thread.history(limit=None, oldest_first=True):
         created = message.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        content = _strip_discord_markup(_message_content(message), message.guild)
+        content = await _strip_discord_markup(_message_content(message), resolver)
         if message.attachments:
             for att in message.attachments:
                 content += f" [Attachment: {att.url}]"
         if message.embeds:
-            embed_text = "\n".join(filter(None, (_embed_text(embed, message.guild) for embed in message.embeds)))
+            embed_parts: list[str] = []
+            for embed in message.embeds:
+                embed_text = await _embed_text(embed, resolver)
+                if embed_text:
+                    embed_parts.append(embed_text)
+            embed_text = "\n".join(embed_parts)
             if embed_text:
                 content = f"{content}\n{embed_text}".strip()
             else:
                 content += " [Embed]"
         lines.append(f"[{created}] {message.author}: {content}")
-        html_messages.append(_message_block(message))
+        html_messages.append(await _message_block(message, resolver))
 
     transcript_text = "\n".join(lines) if lines else "No messages in thread."
 
@@ -270,8 +329,11 @@ a {{ color: #93c5fd; text-decoration: none; }}
 .content {{ margin: 0; color: #f3f4f6; line-height: 1.55; word-break: break-word; }}
 .attachments {{ margin-top: 12px; padding-top: 12px; border-top: 1px solid #374151; }}
 .attachments strong {{ display: block; margin-bottom: 8px; }}
-.attachments ul {{ margin: 0; padding-left: 20px; }}
-.attachments li + li {{ margin-top: 6px; }}
+.attachment + .attachment {{ margin-top: 10px; }}
+.attachment-image-wrap {{ display: grid; gap: 8px; }}
+.attachment-image {{ display: block; max-width: 100%; max-height: 520px; border-radius: 10px; border: 1px solid #374151; background: #0f172a; object-fit: contain; }}
+.attachment-caption {{ color: #9ca3af; font-size: 0.95rem; }}
+.attachment-file a {{ display: inline-block; padding: 10px 12px; border-radius: 8px; background: #0f172a; border: 1px solid #374151; }}
 .embed-block {{ margin-top: 12px; border: 1px solid #374151; border-left: 4px solid #2563eb; background: #111827; padding: 12px 14px; border-radius: 10px; }}
 .embed-title {{ font-weight: 700; margin-bottom: 6px; }}
 .embed-description {{ margin-bottom: 8px; line-height: 1.5; }}
