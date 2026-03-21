@@ -6,18 +6,24 @@
     <title>{{ title if title else 'Ticket Dashboard' }}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <style>
+        * { box-sizing: border-box; }
         body { font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }
         a { color: #93c5fd; text-decoration: none; }
         .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }
         .topbar-left { display:flex; align-items:center; gap:24px; }
         .topnav { display:flex; gap:16px; }
         .topnav a { color:#dbeafe; }
+        .user-badge { display:flex; align-items:center; gap:10px; }
+        .user-badge img { width:32px; height:32px; border-radius:50%; }
         .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
         .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin:24px 0; }
         .card { background:#1f2937; border-radius:12px; padding:16px; }
         table { width:100%; border-collapse: collapse; background:#1f2937; border-radius:12px; overflow:hidden; }
         th, td { padding:12px; border-bottom:1px solid #374151; text-align:left; }
         th { background:#111827; }
+        .table-scroll { width:100%; overflow-x:auto; margin-top:12px; }
+        .table-scroll table { min-width:100%; }
+        .table-wide { min-width:860px; }
         .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#374151; }
         .open { background:#065f46; }
         .closed { background:#92400e; }
@@ -32,6 +38,7 @@
         .value { font-size:1rem; }
         .stack { display:grid; gap:16px; }
         .split { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+        .section-gap { margin-bottom:16px; }
         .bar-list { display:grid; gap:10px; }
         .bar-row { display:grid; grid-template-columns:minmax(120px, 1fr) minmax(140px, 3fr) auto; gap:10px; align-items:center; }
         .bar-label { color:#e5e7eb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -39,6 +46,7 @@
         .bar-fill { height:100%; background:linear-gradient(90deg, #2563eb, #60a5fa); border-radius:999px; }
         .bar-value { color:#d1d5db; font-variant-numeric:tabular-nums; }
         .notice { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#064e3b; color:#d1fae5; }
+        .error-box { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#7f1d1d; color:#fecaca; overflow-wrap:anywhere; }
         .muted { color:#9ca3af; }
         .help { font-size:0.92rem; color:#9ca3af; margin-top:-8px; margin-bottom:16px; }
         .inline-form { display:grid; grid-template-columns:minmax(220px, 1fr) minmax(220px, 1fr) auto; column-gap:24px; row-gap:16px; align-items:end; margin-top:8px; }
@@ -52,21 +60,35 @@
         .card-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:20px; }
         .card-header p { margin:0; }
         .summary-pill { display:inline-block; padding:10px 14px; border-radius:999px; background:#111827; border:1px solid #374151; color:#e5e7eb; white-space:nowrap; }
+        .discord-button { display:inline-flex; align-items:center; justify-content:center; gap:10px; width:100%; max-width:100%; padding:12px 16px; border-radius:10px; background:#5865F2; color:#fff; font-weight:700; }
+        .pagination { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; flex-wrap:wrap; }
+        .pagination-links { display:flex; align-items:center; gap:10px; }
+        .pagination-link { display:inline-block; padding:8px 12px; border-radius:8px; background:#111827; border:1px solid #374151; color:#dbeafe; }
+        .pagination-link.disabled { color:#6b7280; pointer-events:none; }
     </style>
 </head>
 <body>
     <div class="topbar">
         <div class="topbar-left">
             <div><strong>Discord Ticket Dashboard</strong></div>
-            {% if user %}
+            {% if viewer %}
             <nav class="topnav">
                 <a href="/">Dashboard</a>
+                {% if is_admin %}
                 <a href="/stats">Stats</a>
                 <a href="/admin">Admin</a>
+                {% endif %}
             </nav>
             {% endif %}
         </div>
-        <div>{% if user %}Signed in as {{ user }} · <a href="/logout">Logout</a>{% endif %}</div>
+        <div>
+            {% if viewer %}
+            <div class="user-badge">
+                {% if viewer.avatar_url %}<img src="{{ viewer.avatar_url }}" alt="avatar">{% endif %}
+                <span>Signed in as {{ viewer.display_name }}{% if is_admin %} · Admin{% endif %} · <a href="/logout">Logout</a></span>
+            </div>
+            {% endif %}
+        </div>
     </div>
     <div class="container">
         {% block content %}{% endblock %}

@@ -2,13 +2,12 @@
 {% block content %}
 <div class="login-box">
     <h1>Dashboard Login</h1>
-    {% if error %}<p style="color:#fca5a5;">{{ error }}</p>{% endif %}
-    <form method="post" action="/login">
-        <label>Username</label>
-        <input type="text" name="username" required>
-        <label>Password</label>
-        <input type="password" name="password" required>
-        <button type="submit">Sign In</button>
-    </form>
+    {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+    <p class="muted">Sign in with Discord to view the tickets your account is allowed to access.</p>
+    {% if oauth_configured %}
+    <p><a class="discord-button" href="/auth/discord/start">Sign in with Discord</a></p>
+    {% else %}
+    <p class="muted">Discord OAuth is not configured yet. Add the dashboard Discord client settings in <code>config.ini</code> first.</p>
+    {% endif %}
 </div>
 {% endblock %}

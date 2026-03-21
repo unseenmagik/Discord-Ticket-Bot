@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -53,7 +54,24 @@ class TicketsCog(commands.Cog):
     async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
         if delete_after is None:
             delete_after = self.bot.settings.interaction_delete_after_seconds
-        await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
+        try:
+            if interaction.response.is_done():
+                message = await interaction.followup.send(content, ephemeral=True, wait=True)
+                if delete_after and message is not None:
+                    asyncio.create_task(self._delete_followup_message_later(message, delete_after))
+            else:
+                await interaction.response.send_message(content, ephemeral=True, delete_after=delete_after)
+        except discord.NotFound:
+            log.warning("Interaction expired before a reply could be sent.")
+        except discord.HTTPException:
+            log.exception("Failed to send interaction reply.")
+
+    async def _delete_followup_message_later(self, message: discord.WebhookMessage, delay: float) -> None:
+        await asyncio.sleep(delay)
+        try:
+            await message.delete()
+        except (discord.NotFound, discord.HTTPException):
+            pass
 
     async def _find_thread_control_message(self, thread: discord.Thread, thread_id: int) -> discord.Message | None:
         close_custom_id = f"ticket:close:{thread_id}"
@@ -142,6 +160,84 @@ class TicketsCog(commands.Cog):
     async def _get_message_templates(self) -> dict[str, str]:
         return await self.bot.db.get_message_templates()
 
+    async def _resolve_ticket_user(self, user_id: int) -> discord.User | None:
+        user = self.bot.get_user(user_id)
+        if user is not None:
+            return user
+        try:
+            return await self.bot.fetch_user(user_id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            return None
+
+    def _thread_link(self, thread: discord.Thread) -> str:
+        jump_url = getattr(thread, "jump_url", None)
+        if jump_url:
+            return str(jump_url)
+        return f"https://discord.com/channels/{thread.guild.id}/{thread.id}"
+
+    async def _send_ticket_created_dm(
+        self,
+        *,
+        opener_id: int,
+        thread: discord.Thread,
+        server_label: str,
+    ) -> None:
+        user = await self._resolve_ticket_user(opener_id)
+        if user is None:
+            log.warning("Could not resolve ticket opener for created DM opener_id=%s", opener_id)
+            return
+
+        embed = self._embed(
+            "Ticket Created",
+            "Your ticket has been created successfully.",
+        )
+        embed.color = discord.Color.green()
+        embed.add_field(name="Ticket Name", value=thread.name, inline=False)
+        embed.add_field(name="Queue", value=server_label, inline=True)
+        embed.add_field(name="Ticket ID", value=f"`{thread.id}`", inline=True)
+        embed.add_field(name="Open Ticket", value=f"[Open in Discord]({self._thread_link(thread)})", inline=False)
+
+        try:
+            await user.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning(
+                "Failed to send ticket created DM for thread_id=%s opener_id=%s",
+                thread.id,
+                opener_id,
+            )
+
+    async def _send_transcript_dm(self, ticket: dict, transcript_url: str | None) -> None:
+        if not transcript_url:
+            return
+
+        opener_id = ticket.get("opener_id")
+        if not opener_id:
+            return
+
+        user = await self._resolve_ticket_user(opener_id)
+        if user is None:
+            log.warning("Could not resolve ticket opener for transcript DM opener_id=%s", opener_id)
+            return
+
+        embed = self._embed(
+            "Ticket Closed",
+            "Your ticket has been closed.",
+        )
+        embed.color = discord.Color.red()
+        embed.add_field(name="Ticket ID", value=f"`{ticket.get('thread_id')}`", inline=True)
+        embed.add_field(name="Queue", value=str(ticket.get("server_label") or "Unknown"), inline=True)
+        embed.add_field(name="Transcript", value=f"[Open Transcript]({transcript_url})", inline=False)
+        embed.set_footer(text="If prompted, sign in to the dashboard with Discord to open it.")
+
+        try:
+            await user.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning(
+                "Failed to send transcript DM for thread_id=%s opener_id=%s",
+                ticket.get("thread_id"),
+                opener_id,
+            )
+
     async def _user_can_manage_ticket(
         self,
         interaction: discord.Interaction,
@@ -181,6 +277,11 @@ class TicketsCog(commands.Cog):
         if target_channel is None or not isinstance(target_channel, discord.TextChannel):
             await self._reply(interaction, "The configured destination channel is invalid.")
             return
+
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.HTTPException:
+            log.warning("Failed to defer ticket creation interaction for user_id=%s", interaction.user.id)
 
         seed_message = await target_channel.send(f"New ticket request from {interaction.user.mention} for **{chosen_label}**")
         thread_name = (
@@ -241,6 +342,11 @@ class TicketsCog(commands.Cog):
         close_view = ThreadCloseView(self.bot, thread.id)
         self.bot.add_view(close_view)
         await thread.send(content=mentions or None, embed=embed, view=close_view)
+        await self._send_ticket_created_dm(
+            opener_id=interaction.user.id,
+            thread=thread,
+            server_label=chosen_label,
+        )
         log.info(
             "Ticket opened thread_id=%s guild_id=%s opener_id=%s server_label=%s target_channel_id=%s",
             thread.id,
@@ -321,6 +427,7 @@ class TicketsCog(commands.Cog):
             log_message_id=log_message_id,
             transcript_message_url=transcript_message_url,
         )
+        await self._send_transcript_dm(ticket, transcript_message_url)
         try:
             await thread.send(f"Ticket closed by {interaction.user.mention}.")
         except discord.HTTPException:

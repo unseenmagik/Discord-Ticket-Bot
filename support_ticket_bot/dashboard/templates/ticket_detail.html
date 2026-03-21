@@ -7,9 +7,11 @@
         <div class="label">Status</div><div class="value"><span class="pill {{ ticket.status }}">{{ ticket.status }}</span></div>
         <div class="label">Server</div><div class="value">{{ ticket.server_label }}</div>
         <div class="label">Opened by</div><div class="value">{{ ticket.opener_name }} ({{ ticket.opener_id }})</div>
+        {% if is_admin %}
         <div class="label">Guild ID</div><div class="value">{{ ticket.guild_id }}</div>
         <div class="label">Target channel ID</div><div class="value">{{ ticket.target_channel_id }}</div>
         <div class="label">Seed message ID</div><div class="value">{{ ticket.seed_message_id }}</div>
+        {% endif %}
         <div class="label">Created at</div><div class="value">{{ ticket.created_at }}</div>
         <div class="label">Closed at</div><div class="value">{{ ticket.closed_at or '—' }}</div>
         <div class="label">Closed by</div><div class="value">{{ ticket.closed_by_name or '—' }}</div>
@@ -17,7 +19,9 @@
         <div class="label">Reopened by</div><div class="value">{{ ticket.reopened_by_name or '—' }}</div>
         <div class="label">Deleted at</div><div class="value">{{ ticket.deleted_at or '—' }}</div>
         <div class="label">Deleted by</div><div class="value">{{ ticket.deleted_by_name or '—' }}</div>
+        {% if is_admin %}
         <div class="label">Log message ID</div><div class="value">{{ ticket.log_message_id or '—' }}</div>
+        {% endif %}
         <div class="label">Transcript URL</div>
         <div class="value">
             {% if ticket.status in ['closed', 'deleted'] %}

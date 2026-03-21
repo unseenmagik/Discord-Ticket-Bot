@@ -28,3 +28,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
     setting_key VARCHAR(100) PRIMARY KEY,
     setting_value TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS dashboard_audit_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_type VARCHAR(100) NOT NULL,
+    actor_discord_user_id BIGINT NOT NULL,
+    actor_username VARCHAR(255) NOT NULL,
+    actor_display_name VARCHAR(255) NOT NULL,
+    ticket_thread_id BIGINT NULL,
+    metadata_json TEXT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    INDEX idx_dashboard_audit_created_at (created_at),
+    INDEX idx_dashboard_audit_actor (actor_discord_user_id),
+    INDEX idx_dashboard_audit_event_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

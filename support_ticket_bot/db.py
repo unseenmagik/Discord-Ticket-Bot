@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -16,6 +17,23 @@ CREATE TABLE IF NOT EXISTS app_settings (
     setting_value TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
+APP_SETTINGS_TABLE_NAME = "app_settings"
+AUDIT_LOG_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS dashboard_audit_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_type VARCHAR(100) NOT NULL,
+    actor_discord_user_id BIGINT NOT NULL,
+    actor_username VARCHAR(255) NOT NULL,
+    actor_display_name VARCHAR(255) NOT NULL,
+    ticket_thread_id BIGINT NULL,
+    metadata_json TEXT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    INDEX idx_dashboard_audit_created_at (created_at),
+    INDEX idx_dashboard_audit_actor (actor_discord_user_id),
+    INDEX idx_dashboard_audit_event_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+AUDIT_LOG_TABLE_NAME = "dashboard_audit_log"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -132,7 +150,10 @@ class TicketDatabase:
             charset=self.settings.db_charset,
             autocommit=True,
         )
-        await self.execute(APP_SETTINGS_TABLE_SQL)
+        if not await self._table_exists(APP_SETTINGS_TABLE_NAME):
+            await self.execute(APP_SETTINGS_TABLE_SQL)
+        if not await self._table_exists(AUDIT_LOG_TABLE_NAME):
+            await self.execute(AUDIT_LOG_TABLE_SQL)
 
     async def close(self) -> None:
         if self.pool is not None:
@@ -162,6 +183,18 @@ class TicketDatabase:
                 await cur.execute(query, params)
                 rows = await cur.fetchall()
                 return [dict(row) for row in rows]
+
+    async def _table_exists(self, table_name: str) -> bool:
+        row = await self.fetchone(
+            """
+            SELECT 1 AS present
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+            LIMIT 1
+            """,
+            (self.settings.db_name, table_name),
+        )
+        return row is not None
 
     async def create_ticket(
         self,
@@ -320,20 +353,88 @@ class DashboardDatabase:
         )
 
     def ensure_app_settings_table(self) -> None:
+        if self._table_exists(APP_SETTINGS_TABLE_NAME):
+            return
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(APP_SETTINGS_TABLE_SQL)
 
-    def get_stats(self) -> dict[str, int]:
+    def ensure_dashboard_audit_table(self) -> None:
+        if self._table_exists(AUDIT_LOG_TABLE_NAME):
+            return
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM tickets")
+                cur.execute(AUDIT_LOG_TABLE_SQL)
+
+    def _table_exists(self, table_name: str) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1 AS present
+                    FROM information_schema.tables
+                    WHERE table_schema = %s AND table_name = %s
+                    LIMIT 1
+                    """,
+                    (self.settings.db_name, table_name),
+                )
+                return cur.fetchone() is not None
+
+    def _ticket_access_filter_sql(
+        self,
+        *,
+        opener_id: int | None,
+        channel_ids: list[int] | None,
+        allow_all: bool,
+    ) -> tuple[str, list[Any]]:
+        if allow_all:
+            return "", []
+
+        filters: list[str] = []
+        params: list[Any] = []
+        if opener_id is not None:
+            filters.append("opener_id = %s")
+            params.append(opener_id)
+        if channel_ids:
+            placeholders = ", ".join(["%s"] * len(channel_ids))
+            filters.append(f"target_channel_id IN ({placeholders})")
+            params.extend(channel_ids)
+
+        if not filters:
+            return " WHERE 1 = 0", []
+        return " WHERE (" + " OR ".join(filters) + ")", params
+
+    def get_stats(
+        self,
+        *,
+        opener_id: int | None = None,
+        channel_ids: list[int] | None = None,
+        allow_all: bool = False,
+    ) -> dict[str, int]:
+        access_sql, access_params = self._ticket_access_filter_sql(
+            opener_id=opener_id,
+            channel_ids=channel_ids,
+            allow_all=allow_all,
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) AS c FROM tickets{access_sql}", tuple(access_params))
                 total = cur.fetchone()["c"]
-                cur.execute("SELECT COUNT(*) AS c FROM tickets WHERE status = 'open'")
+                status_prefix = " AND" if access_sql else " WHERE"
+                cur.execute(
+                    f"SELECT COUNT(*) AS c FROM tickets{access_sql}{status_prefix} status = 'open'",
+                    tuple(access_params),
+                )
                 open_count = cur.fetchone()["c"]
-                cur.execute("SELECT COUNT(*) AS c FROM tickets WHERE status = 'closed'")
+                cur.execute(
+                    f"SELECT COUNT(*) AS c FROM tickets{access_sql}{status_prefix} status = 'closed'",
+                    tuple(access_params),
+                )
                 closed_count = cur.fetchone()["c"]
-                cur.execute("SELECT COUNT(*) AS c FROM tickets WHERE status = 'deleted'")
+                cur.execute(
+                    f"SELECT COUNT(*) AS c FROM tickets{access_sql}{status_prefix} status = 'deleted'",
+                    tuple(access_params),
+                )
                 deleted_count = cur.fetchone()["c"]
         return {
             "total": total,
@@ -342,11 +443,26 @@ class DashboardDatabase:
             "deleted": deleted_count,
         }
 
-    def list_tickets(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_tickets(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+        opener_id: int | None = None,
+        channel_ids: list[int] | None = None,
+        allow_all: bool = False,
+    ) -> list[dict[str, Any]]:
         query = "SELECT * FROM tickets"
         params: list[Any] = []
+        access_sql, access_params = self._ticket_access_filter_sql(
+            opener_id=opener_id,
+            channel_ids=channel_ids,
+            allow_all=allow_all,
+        )
+        query += access_sql
+        params.extend(access_params)
         if status in {"open", "closed", "deleted"}:
-            query += " WHERE status = %s"
+            query += " AND status = %s" if access_sql else " WHERE status = %s"
             params.append(status)
         query += " ORDER BY created_at DESC LIMIT %s"
         params.append(limit)
@@ -355,10 +471,27 @@ class DashboardDatabase:
                 cur.execute(query, tuple(params))
                 return list(cur.fetchall())
 
-    def get_ticket(self, thread_id: int) -> dict[str, Any] | None:
+    def get_ticket(
+        self,
+        thread_id: int,
+        *,
+        opener_id: int | None = None,
+        channel_ids: list[int] | None = None,
+        allow_all: bool = False,
+    ) -> dict[str, Any] | None:
+        access_sql, access_params = self._ticket_access_filter_sql(
+            opener_id=opener_id,
+            channel_ids=channel_ids,
+            allow_all=allow_all,
+        )
+        query = "SELECT * FROM tickets WHERE thread_id = %s"
+        params: list[Any] = [thread_id]
+        if access_sql:
+            query += " AND " + access_sql.removeprefix(" WHERE ")
+            params.extend(access_params)
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM tickets WHERE thread_id = %s", (thread_id,))
+                cur.execute(query, tuple(params))
                 return cur.fetchone()
 
     def get_message_templates(self) -> dict[str, str]:
@@ -386,6 +519,77 @@ class DashboardDatabase:
                         """,
                         (key, value),
                     )
+
+    def add_audit_event(
+        self,
+        *,
+        event_type: str,
+        actor_discord_user_id: int,
+        actor_username: str,
+        actor_display_name: str,
+        ticket_thread_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> None:
+        self.ensure_dashboard_audit_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO dashboard_audit_log (
+                        event_type,
+                        actor_discord_user_id,
+                        actor_username,
+                        actor_display_name,
+                        ticket_thread_id,
+                        metadata_json,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        event_type,
+                        actor_discord_user_id,
+                        actor_username,
+                        actor_display_name,
+                        ticket_thread_id,
+                        json.dumps(metadata, sort_keys=True) if metadata else None,
+                        created_at,
+                    ),
+                )
+
+    def count_audit_events(self) -> int:
+        self.ensure_dashboard_audit_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS c FROM dashboard_audit_log")
+                row = cur.fetchone()
+        return int(row["c"]) if row else 0
+
+    def list_audit_events(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        self.ensure_dashboard_audit_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM dashboard_audit_log
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+                rows = list(cur.fetchall())
+
+        for row in rows:
+            metadata_json = row.get("metadata_json")
+            if metadata_json:
+                try:
+                    row["metadata"] = json.loads(metadata_json)
+                except json.JSONDecodeError:
+                    row["metadata"] = {"raw": metadata_json}
+            else:
+                row["metadata"] = {}
+        return rows
 
     def get_ticket_analytics(
         self,

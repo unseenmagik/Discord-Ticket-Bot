@@ -7,9 +7,11 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 - Single pinned ticket panel with a **Create Ticket** button
 - Ephemeral server picker for pre-set server/admin options
 - Each ticket created as a **thread** in the mapped channel
+- **Ticket created DM** sent to the opener with the ticket name and Discord thread link
 - **Close Ticket** button inside the thread
 - **Reopen Ticket** and **Delete Now** buttons in the transcript log channel
 - **TXT and HTML transcripts**
+- **Transcript DM** sent to the ticket opener when a ticket is closed
 - **MariaDB / MySQL** storage instead of SQLite
 - **FastAPI web dashboard** for stats and ticket browsing
 - **Auto-delete** for closed threads after a configurable delay
@@ -99,9 +101,10 @@ mysql -u ticketbot -p discord_tickets < schema.sql
 - `message_content_intent = true` if you want ticket transcripts to include the actual message text
 - Transcript channel ID
 - MariaDB/MySQL connection details in `[database]`, using the same database name, username, and password you created in step 5
-- Dashboard credentials in `[dashboard]`
+- Dashboard Discord OAuth settings in `[dashboard]`
 - `interaction_delete_after_seconds` in `[tickets]` to control how long ephemeral action replies stay visible
 - Server label → channel ID mappings in `[servers]`
+- Optional role-based dashboard ticket access in `[dashboard_role_access]`
 
 If you enable `message_content_intent`, you must also enable the Message Content Intent for your bot in the Discord Developer Portal.
 
@@ -202,23 +205,33 @@ You can change this in the `[dashboard]` section of `config.ini`:
 
 - `host` sets the bind address
 - `port` sets the web port
-- `username` and `password` are the login credentials
 - `base_url` should match the public URL you want the dashboard to use in ticket links
+- `discord_client_id` and `discord_client_secret` should come from your Discord application
+- `discord_redirect_uri` must match the redirect URI configured in the Discord Developer Portal
+- `admin_user_ids` lists the Discord users who can see all dashboard pages, including `Stats` and `Admin`
+
+Optional dashboard ticket access by Discord role can be configured in `[dashboard_role_access]`:
+
+- Each key is a Discord role ID
+- Each value is either a comma-separated list of tracked ticket channel IDs or `*`
+- Users always see tickets they opened themselves
+- A matching role grants access to tickets for the configured channel IDs
+- `*` grants access to all tracked tickets, but does not grant admin-page access
 
 To access the WebUI:
 
 1. Start the dashboard with `python dashboard.py` or run it with PM2
 2. Open your browser and go to `http://127.0.0.1:8000` or your configured `base_url`
-3. Log in with the `username` and `password` from the `[dashboard]` section in `config.ini`
+3. Click `Sign in with Discord` and complete the OAuth flow with a Discord account
 
 Inside the WebUI you can:
 
-- View total, open, closed, and deleted ticket counts
-- Open a dedicated stats page with date-range filters, ticket trends, server breakdowns, top openers, top closers, and oldest open tickets
+- View total, open, closed, and deleted ticket counts for the tickets your Discord account is allowed to access
 - Filter tickets by status
 - Open an individual ticket detail page by clicking `Open`
 - Open the saved HTML transcript for a closed ticket directly in your browser
-- Update the ticket panel and thread welcome message templates from the `Admin` page
+- If your Discord user is listed in `admin_user_ids`, also access the full `Stats` and `Admin` pages
+- If you are denied access to an admin-only page, the dashboard now shows a friendly `403` page instead of a raw framework error
 
 ## Admin page
 
@@ -228,6 +241,8 @@ The dashboard `Admin` page lets you change:
 - The ticket panel description
 - The initial thread message title
 - The initial thread message description
+- Review configured admin user IDs and role-based queue visibility rules
+- Review recent dashboard audit events such as successful logins and transcript views
 
 These changes apply to new ticket panels and new tickets after they are saved.
 
@@ -270,7 +285,10 @@ If your bot is running on a remote server, keep `host = 127.0.0.1` if you only w
 
 ## Dashboard notes
 
-- The dashboard uses FastAPI and server-rendered templates for the login page, overview page, and individual ticket detail pages.
+- The dashboard uses FastAPI and server-rendered templates for the login page, overview page, stats page, admin page, and individual ticket detail pages.
+- Discord OAuth requires a redirect URI in the Discord Developer Portal that exactly matches `discord_redirect_uri` in `config.ini`.
+- The dashboard requests the `identify` and `guilds.members.read` OAuth scopes so it can identify the user and read their roles in the configured guild.
+- Successful dashboard logins and transcript views are written to the `dashboard_audit_log` table and shown on the `Admin` page.
 - Closed ticket log messages can link back to the dashboard using the `base_url` configured in `[dashboard]`.
 - The bot stores ticket data in MariaDB/MySQL, and the dashboard reads from the same database to display ticket history and statistics.
 - Full transcript message text requires the Discord Message Content Intent to be enabled both in `config.ini` and in the Discord Developer Portal.
