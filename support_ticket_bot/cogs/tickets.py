@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from support_ticket_bot.transcript import generate_transcripts, store_html_transcript
-from support_ticket_bot.utils import clean_slug, utc_now_iso
+from support_ticket_bot.utils import clean_slug, render_template, utc_now_iso
 from support_ticket_bot.views import TicketLogControlsView, TicketPanelView, ThreadCloseView, ThreadReopenView
 
 log = logging.getLogger(__name__)
@@ -139,6 +139,9 @@ class TicketsCog(commands.Cog):
             return None
         return fetched if isinstance(fetched, discord.Thread) else None
 
+    async def _get_message_templates(self) -> dict[str, str]:
+        return await self.bot.db.get_message_templates()
+
     async def _user_can_manage_ticket(
         self,
         interaction: discord.Interaction,
@@ -179,17 +182,6 @@ class TicketsCog(commands.Cog):
             await self._reply(interaction, "The configured destination channel is invalid.")
             return
 
-        if settings.prevent_duplicate_open_tickets:
-            existing = await self.bot.db.get_open_ticket_for_user(interaction.user.id, chosen_label)
-            if existing:
-                thread = interaction.guild.get_thread(existing["thread_id"]) or self.bot.get_channel(existing["thread_id"])
-                mention = thread.mention if isinstance(thread, discord.Thread) else f"`{existing['thread_id']}`"
-                await self._reply(
-                    interaction,
-                    f"You already have an open ticket for **{chosen_label}**: {mention}",
-                )
-                return
-
         seed_message = await target_channel.send(f"New ticket request from {interaction.user.mention} for **{chosen_label}**")
         thread_name = (
             f"{settings.thread_name_prefix}-{clean_slug(chosen_label, 30)}-"
@@ -226,13 +218,23 @@ class TicketsCog(commands.Cog):
         )
 
         mentions = " ".join(f"<@&{role_id}>" for role_id in settings.support_role_ids)
+        templates = await self._get_message_templates()
         embed = self._embed(
-            "Ticket Created",
-            (
-                f"**Server:** {chosen_label}\n"
-                f"**Opened by:** {interaction.user.mention}\n"
-                f"**Ticket ID:** `{thread.id}`\n\n"
-                "Use the button below to close this ticket when it is resolved."
+            render_template(
+                templates["thread_embed_title"],
+                guild_name=interaction.guild.name,
+                server_label=chosen_label,
+                user_mention=interaction.user.mention,
+                user_name=interaction.user.display_name,
+                thread_id=thread.id,
+            ),
+            render_template(
+                templates["thread_embed_description"],
+                guild_name=interaction.guild.name,
+                server_label=chosen_label,
+                user_mention=interaction.user.mention,
+                user_name=interaction.user.display_name,
+                thread_id=thread.id,
             ),
         )
 
@@ -276,7 +278,7 @@ class TicketsCog(commands.Cog):
                 f"**Server:** {ticket['server_label']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
                 f"**Closed by:** {closed_by.mention}\n"
-                f"**Dashboard:** {dashboard_link}\n"
+                f"**Dashboard:** [Click Here]({dashboard_link})\n"
                 f"**Delete after:** {self.bot.settings.delete_closed_threads_after_hours} hour(s)"
             ),
         )
@@ -440,9 +442,18 @@ class TicketsCog(commands.Cog):
         if channel is None or not isinstance(channel, discord.TextChannel):
             await self._reply(interaction, "The configured panel channel is invalid.")
             return
+        templates = await self._get_message_templates()
         embed = self._embed(
-            "Support Tickets",
-            "Press **Create Ticket** below, then choose which server the ticket is for.",
+            render_template(
+                templates["panel_title"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
+            render_template(
+                templates["panel_description"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
         )
         message = await channel.send(embed=embed, view=TicketPanelView(self.bot))
         try:
@@ -461,9 +472,18 @@ class TicketsCog(commands.Cog):
         if channel is None or not isinstance(channel, discord.TextChannel):
             await self._reply(interaction, "The configured panel channel is invalid.")
             return
+        templates = await self._get_message_templates()
         embed = self._embed(
-            "Support Tickets",
-            "Press **Create Ticket** below, then choose which server the ticket is for.",
+            render_template(
+                templates["panel_title"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
+            render_template(
+                templates["panel_description"],
+                guild_name=interaction.guild.name,
+                panel_channel_mention=channel.mention,
+            ),
         )
         message = await channel.send(embed=embed, view=TicketPanelView(self.bot))
         try:
@@ -507,6 +527,47 @@ class TicketsCog(commands.Cog):
             ),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="add_ticket_user", description="Add a user to the current ticket thread")
+    async def add_ticket_user(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        if not isinstance(interaction.channel, discord.Thread):
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
+            return
+
+        thread = interaction.channel
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
+            return
+        if ticket["status"] != "open":
+            await self._reply(interaction, "You can only add users to an open ticket.")
+            return
+        if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
+            await self._reply(interaction, "You do not have permission to add users to this ticket.")
+            return
+
+        try:
+            await thread.add_user(user)
+        except discord.Forbidden:
+            await self._reply(interaction, "I do not have permission to add that user to this thread.")
+            return
+        except discord.HTTPException as exc:
+            await self._reply(interaction, f"Failed to add user to ticket: {exc}")
+            return
+
+        try:
+            await thread.send(f"{user.mention} has been added to the ticket by {interaction.user.mention}.")
+        except discord.HTTPException:
+            pass
+
+        log.info(
+            "Ticket user added thread_id=%s guild_id=%s added_user_id=%s added_by_id=%s",
+            thread.id,
+            thread.guild.id,
+            user.id,
+            interaction.user.id,
+        )
+        await self._reply(interaction, f"Added {user.mention} to {thread.mention}.")
 
 
 async def setup(bot: "SupportTicketBot") -> None:

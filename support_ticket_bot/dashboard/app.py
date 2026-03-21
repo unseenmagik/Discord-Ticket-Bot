@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from support_ticket_bot.config import BotSettings, load_settings
 from support_ticket_bot.db import DashboardDatabase
 from support_ticket_bot.transcript import TRANSCRIPTS_DIR
-from support_ticket_bot.utils import hash_password
+from support_ticket_bot.utils import DEFAULT_MESSAGE_TEMPLATES, hash_password
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI):
     settings = load_settings()
     app.state.settings = settings
     app.state.db = DashboardDatabase(settings)
+    app.state.db.ensure_app_settings_table()
     yield
 
 
@@ -82,6 +83,42 @@ def create_app() -> FastAPI:
                 "user": user,
             },
         )
+
+    @app.get("/admin", response_class=HTMLResponse)
+    async def admin_page(request: Request, saved: int = 0, user: str = Depends(require_login)):
+        db: DashboardDatabase = request.app.state.db
+        templates = db.get_message_templates()
+        return TEMPLATES.TemplateResponse(
+            "admin.html",
+            {
+                "request": request,
+                "templates": templates,
+                "saved": bool(saved),
+                "user": user,
+            },
+        )
+
+    @app.post("/admin/messages")
+    async def save_admin_messages(
+        request: Request,
+        panel_title: str = Form(...),
+        panel_description: str = Form(...),
+        thread_embed_title: str = Form(...),
+        thread_embed_description: str = Form(...),
+        user: str = Depends(require_login),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        values = {
+            "panel_title": panel_title.strip() or DEFAULT_MESSAGE_TEMPLATES["panel_title"],
+            "panel_description": panel_description.strip() or DEFAULT_MESSAGE_TEMPLATES["panel_description"],
+            "thread_embed_title": thread_embed_title.strip() or DEFAULT_MESSAGE_TEMPLATES["thread_embed_title"],
+            "thread_embed_description": thread_embed_description.strip()
+            or DEFAULT_MESSAGE_TEMPLATES["thread_embed_description"],
+        }
+        db.set_message_templates(
+            values
+        )
+        return RedirectResponse(url="/admin?saved=1", status_code=303)
 
     @app.get("/tickets/{thread_id}", response_class=HTMLResponse)
     async def ticket_detail(thread_id: int, request: Request, user: str = Depends(require_login)):

@@ -17,7 +17,6 @@ class BotSettings:
     delete_closed_threads_after_hours: int
     allow_thread_owner_close: bool
     allow_thread_owner_reopen: bool
-    prevent_duplicate_open_tickets: bool
     close_requires_staff: bool
     interaction_delete_after_seconds: float
     embed_color: int
@@ -71,9 +70,6 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
     )
     allow_thread_owner_close = _parse_bool(config, "tickets", "allow_thread_owner_close", True)
     allow_thread_owner_reopen = _parse_bool(config, "tickets", "allow_thread_owner_reopen", False)
-    prevent_duplicate_open_tickets = _parse_bool(
-        config, "tickets", "prevent_duplicate_open_tickets", True
-    )
     close_requires_staff = _parse_bool(config, "tickets", "close_requires_staff", False)
     interaction_delete_after_seconds = config.getfloat("tickets", "interaction_delete_after_seconds", fallback=30.0)
 
@@ -118,7 +114,6 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         delete_closed_threads_after_hours=delete_closed_threads_after_hours,
         allow_thread_owner_close=allow_thread_owner_close,
         allow_thread_owner_reopen=allow_thread_owner_reopen,
-        prevent_duplicate_open_tickets=prevent_duplicate_open_tickets,
         close_requires_staff=close_requires_staff,
         interaction_delete_after_seconds=interaction_delete_after_seconds,
         embed_color=embed_color,

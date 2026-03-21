@@ -164,9 +164,12 @@ Ticket lifecycle events such as open, close, reopen, and delete are logged there
 - `/ticket_panel`
 - `/close_ticket`
 - `/reopen_ticket`
+- `/add_ticket_user`
 - `/ticket_info`
 
 ## Permissions needed
+
+Discord bot permissions:
 
 - View Channel
 - Send Messages
@@ -177,6 +180,12 @@ Ticket lifecycle events such as open, close, reopen, and delete are logged there
 - Embed Links
 - Attach Files
 - Manage Messages
+
+Discord Developer Portal privileged intents:
+
+- Presence Intent
+- Server Members Intent
+- Message Content Intent
 
 ## WebUI
 
@@ -207,6 +216,53 @@ Inside the WebUI you can:
 - Filter tickets by status
 - Open an individual ticket detail page by clicking `Open`
 - Open the saved HTML transcript for a closed ticket directly in your browser
+- Update the ticket panel and thread welcome message templates from the `Admin` page
+
+## Admin page
+
+The dashboard `Admin` page lets you change:
+
+- The ticket panel title
+- The ticket panel description
+- The initial thread message title
+- The initial thread message description
+
+These changes apply to new ticket panels and new tickets after they are saved.
+
+Supported placeholders for the ticket panel message:
+
+- `{guild_name}`
+- `{panel_channel_mention}`
+
+Supported placeholders for the initial thread message:
+
+- `{guild_name}`
+- `{server_label}`
+- `{user_mention}`
+- `{user_name}`
+- `{thread_id}`
+
+You can also hardcode Discord mentions directly:
+
+- User mention: `<@1234567890>`
+- Role mention: `<@&1234567890>`
+- Channel mention: `<#1234567890>`
+
+Example thread message:
+
+```text
+**Server:** {server_label}
+**Opened by:** {user_mention}
+Moderator ping: <@&1234567890>
+**Ticket ID:** `{thread_id}`
+```
+
+Example panel description:
+
+```text
+Welcome to {guild_name}.
+Press **Create Ticket** below to open a support request in {panel_channel_mention}.
+```
 
 If your bot is running on a remote server, keep `host = 127.0.0.1` if you only want local access through a reverse proxy or SSH tunnel. If you want the dashboard to listen publicly, change `host` to `0.0.0.0` and secure it properly before exposing it to the internet.
 

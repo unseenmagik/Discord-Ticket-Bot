@@ -101,8 +101,16 @@ class ThreadReopenView(discord.ui.View):
             emoji="🔓",
             custom_id=f"ticket:thread_reopen:{thread_id}",
         )
+        delete_button = discord.ui.Button(
+            label="Delete Ticket",
+            style=discord.ButtonStyle.danger,
+            emoji="🗑️",
+            custom_id=f"ticket:thread_delete:{thread_id}",
+        )
         reopen_button.callback = self._reopen_callback
+        delete_button.callback = self._delete_callback
         self.add_item(reopen_button)
+        self.add_item(delete_button)
 
     async def _reopen_callback(self, interaction: discord.Interaction) -> None:
         cog = self.bot.get_cog("TicketsCog")
@@ -114,6 +122,17 @@ class ThreadReopenView(discord.ui.View):
             )
             return
         await cog.handle_reopen_from_log(interaction, self.thread_id)
+
+    async def _delete_callback(self, interaction: discord.Interaction) -> None:
+        cog = self.bot.get_cog("TicketsCog")
+        if cog is None:
+            await interaction.response.send_message(
+                "Ticket system is unavailable.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
+            return
+        await cog.handle_delete_from_log(interaction, self.thread_id)
 
 
 class TicketLogControlsView(discord.ui.View):
