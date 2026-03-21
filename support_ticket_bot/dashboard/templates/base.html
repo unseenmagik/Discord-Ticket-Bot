@@ -13,7 +13,7 @@
         .topnav { display:flex; gap:16px; }
         .topnav a { color:#dbeafe; }
         .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
-        .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:24px; }
+        .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin:24px 0; }
         .card { background:#1f2937; border-radius:12px; padding:16px; }
         table { width:100%; border-collapse: collapse; background:#1f2937; border-radius:12px; overflow:hidden; }
         th, td { padding:12px; border-bottom:1px solid #374151; text-align:left; }
@@ -41,9 +41,9 @@
         .notice { margin-bottom:16px; padding:12px 14px; border-radius:10px; background:#064e3b; color:#d1fae5; }
         .muted { color:#9ca3af; }
         .help { font-size:0.92rem; color:#9ca3af; margin-top:-8px; margin-bottom:16px; }
-        .inline-form { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; align-items:end; margin-top:8px; }
+        .inline-form { display:grid; grid-template-columns:minmax(220px, 1fr) minmax(220px, 1fr) auto; column-gap:24px; row-gap:16px; align-items:end; margin-top:8px; }
         .inline-form input, .inline-form select { margin-bottom:0; }
-        .inline-form button { width:auto; margin:0; }
+        .inline-form button { width:auto; margin:0 0 2px 8px; white-space:nowrap; }
         .chip-row { display:flex; flex-wrap:wrap; gap:12px; margin:8px 0 20px; }
         .chip { display:inline-block; padding:10px 16px; border-radius:999px; background:#111827; border:1px solid #374151; color:#dbeafe; }
         .chip.active { background:#1d4ed8; border-color:#2563eb; color:#eff6ff; }
