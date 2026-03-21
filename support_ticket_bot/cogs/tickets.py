@@ -278,7 +278,7 @@ class TicketsCog(commands.Cog):
                 f"**Server:** {ticket['server_label']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
                 f"**Closed by:** {closed_by.mention}\n"
-                f"**Dashboard:** {dashboard_link}\n"
+                f"**Dashboard:** [Click Here]({dashboard_link})\n"
                 f"**Delete after:** {self.bot.settings.delete_closed_threads_after_hours} hour(s)"
             ),
         )
