@@ -170,6 +170,7 @@ Ticket lifecycle events such as open, close, reopen, and delete are logged there
 - `/ticket_panel`
 - `/close_ticket`
 - `/reopen_ticket`
+- `/assign_ticket`
 - `/add_ticket_user`
 - `/ticket_info`
 

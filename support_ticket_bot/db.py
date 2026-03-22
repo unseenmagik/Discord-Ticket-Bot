@@ -393,6 +393,40 @@ class TicketDatabase:
             (thread_id,),
         )
 
+    async def add_audit_event(
+        self,
+        *,
+        event_type: str,
+        actor_discord_user_id: int,
+        actor_username: str,
+        actor_display_name: str,
+        ticket_thread_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> None:
+        await self.execute(
+            """
+            INSERT INTO dashboard_audit_log (
+                event_type,
+                actor_discord_user_id,
+                actor_username,
+                actor_display_name,
+                ticket_thread_id,
+                metadata_json,
+                created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event_type,
+                actor_discord_user_id,
+                actor_username,
+                actor_display_name,
+                ticket_thread_id,
+                json.dumps(metadata, sort_keys=True) if metadata else None,
+                created_at,
+            ),
+        )
+
     async def list_open_tickets(self) -> list[dict[str, Any]]:
         return await self.fetchall("SELECT * FROM tickets WHERE status = 'open'")
 
