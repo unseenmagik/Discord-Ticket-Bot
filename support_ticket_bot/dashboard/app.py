@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
+import logging
 from pathlib import Path
 from urllib.parse import quote_plus, urlencode
 
@@ -51,6 +52,7 @@ STATS_RANGE_LABELS = {
     "custom": "Custom range",
 }
 AUDIT_PAGE_SIZE = 5
+log = logging.getLogger(__name__)
 
 
 def _template_context(request: Request, viewer: DashboardViewer | None, **extra: object) -> dict[str, object]:
@@ -127,11 +129,12 @@ async def _post_ticket_thread_notice(
             description=description,
             color=color,
         )
-    except DiscordOAuthError:
+    except DiscordOAuthError as exc:
+        log.warning("Failed to send dashboard thread embed notice title=%s thread_id=%s: %s", title, thread_id, exc)
         try:
             await post_discord_bot_message(settings.token, thread_id, f"**{title}**\n{description}")
         except DiscordOAuthError:
-            pass
+            log.exception("Failed to send dashboard fallback thread notice title=%s thread_id=%s", title, thread_id)
 
 
 def _admin_url(
@@ -795,7 +798,7 @@ def create_app() -> FastAPI:
             settings,
             thread_id,
             title="Tag Added",
-            description=f'Tag `{tag["tag_name"]}` was added to this ticket by <@{viewer.discord_user_id}>.',
+            description=f'The tag "{tag["tag_name"]}" was added to this ticket by <@{viewer.discord_user_id}>.',
         )
         _log_dashboard_audit_event(
             request,
@@ -838,7 +841,7 @@ def create_app() -> FastAPI:
             settings,
             thread_id,
             title="Tag Removed",
-            description=f'Tag `{existing_tag["tag_name"]}` was removed from this ticket by <@{viewer.discord_user_id}>.',
+            description=f'The tag "{existing_tag["tag_name"]}" was removed from this ticket by <@{viewer.discord_user_id}>.',
         )
         _log_dashboard_audit_event(
             request,

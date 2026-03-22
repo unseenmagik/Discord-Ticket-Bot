@@ -428,7 +428,7 @@ class TicketsCog(commands.Cog):
         await self._send_thread_notice(
             thread,
             title="Tag Added",
-            description=f'Tag `{tag["tag_name"]}` was added to this ticket by {getattr(actor, "mention", str(actor))}.',
+            description=f'The tag "{tag["tag_name"]}" was added to this ticket by {getattr(actor, "mention", str(actor))}.',
             color=self.INFO_EMBED_COLOR,
         )
         await self._record_audit_event(
@@ -459,7 +459,7 @@ class TicketsCog(commands.Cog):
         await self._send_thread_notice(
             thread,
             title="Tag Removed",
-            description=f'Tag `{tag["tag_name"]}` was removed from this ticket by {getattr(actor, "mention", str(actor))}.',
+            description=f'The tag "{tag["tag_name"]}" was removed from this ticket by {getattr(actor, "mention", str(actor))}.',
             color=self.INFO_EMBED_COLOR,
         )
         await self._record_audit_event(
