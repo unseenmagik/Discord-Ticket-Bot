@@ -1034,6 +1034,19 @@ class DashboardDatabase:
                     (thread_id,),
                 )
 
+    def remove_ticket_record(self, *, thread_id: int) -> None:
+        self.ensure_internal_notes_table()
+        self.ensure_tag_tables()
+        self.ensure_thread_notice_queue_table()
+        self.ensure_thread_member_sync_queue_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM ticket_internal_notes WHERE thread_id = %s", (thread_id,))
+                cur.execute("DELETE FROM ticket_tag_assignments WHERE ticket_thread_id = %s", (thread_id,))
+                cur.execute("DELETE FROM ticket_thread_notices WHERE thread_id = %s", (thread_id,))
+                cur.execute("DELETE FROM ticket_thread_member_sync WHERE thread_id = %s", (thread_id,))
+                cur.execute("DELETE FROM tickets WHERE thread_id = %s", (thread_id,))
+
     def list_ticket_notes(self, thread_id: int) -> list[dict[str, Any]]:
         self.ensure_internal_notes_table()
         with self._connect() as conn:

@@ -426,7 +426,13 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request, status_filter: str | None = None, viewer: DashboardViewer = Depends(require_viewer)):
+    async def index(
+        request: Request,
+        status_filter: str | None = None,
+        notice: str | None = None,
+        error: str | None = None,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
         db: DashboardDatabase = request.app.state.db
         access_kwargs = _ticket_access_kwargs(viewer)
         stats = db.get_stats(**access_kwargs)
@@ -441,8 +447,35 @@ def create_app() -> FastAPI:
                 status_filter=status_filter,
                 limited_access=not (viewer.is_admin or viewer.has_global_ticket_access),
                 show_staff_ticket_fields=_viewer_has_staff_ticket_access(viewer),
+                notice=notice,
+                error=error,
             ),
         )
+
+    @app.post("/tickets/{thread_id}/remove")
+    async def remove_ticket_from_dashboard(
+        thread_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_has_staff_ticket_access(viewer) or not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to remove this ticket.")
+
+        ticket_status = ticket.get("status")
+        server_label = ticket.get("server_label")
+        db.remove_ticket_record(thread_id=thread_id)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_removed_from_dashboard",
+            ticket_thread_id=thread_id,
+            metadata={"status": ticket_status, "server_label": server_label},
+        )
+        return RedirectResponse(url="/?notice=" + quote_plus(f"Ticket {thread_id} removed from the dashboard."), status_code=303)
 
     @app.get("/stats", response_class=HTMLResponse)
     async def stats_page(

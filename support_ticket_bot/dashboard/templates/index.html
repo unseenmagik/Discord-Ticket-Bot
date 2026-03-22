@@ -4,6 +4,12 @@
 {% if limited_access %}
 <p class="muted">This view is limited to tickets you opened plus any ticket queues your Discord roles are allowed to review.</p>
 {% endif %}
+{% if notice %}
+<div class="notice">{{ notice }}</div>
+{% endif %}
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% endif %}
 <div class="cards">
     <div class="card"><div class="label">Total</div><div class="value">{{ stats.total }}</div></div>
     <div class="card"><div class="label">Open</div><div class="value">{{ stats.open }}</div></div>
@@ -52,7 +58,16 @@
             <td>{{ ticket.assignee_display_name or 'Unassigned' }}</td>
             {% endif %}
             <td>{{ ticket.created_at }}</td>
-            <td><a href="/tickets/{{ ticket.thread_id }}">Open</a></td>
+            <td>
+                <div class="table-actions">
+                    <a href="/tickets/{{ ticket.thread_id }}">Open</a>
+                    {% if show_staff_ticket_fields %}
+                    <form method="post" action="/tickets/{{ ticket.thread_id }}/remove" onsubmit="return confirm('Remove this ticket from the dashboard database? This does not delete the Discord thread.');">
+                        <button class="button-danger" type="submit">Remove</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
