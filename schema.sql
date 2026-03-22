@@ -77,3 +77,15 @@ CREATE TABLE IF NOT EXISTS ticket_tag_assignments (
     PRIMARY KEY (ticket_thread_id, tag_id),
     INDEX idx_ticket_tag_assignments_tag_id (tag_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_thread_notices (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    color INT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    processed_at VARCHAR(64) NULL,
+    INDEX idx_ticket_thread_notices_processed_created (processed_at, created_at),
+    INDEX idx_ticket_thread_notices_thread (thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

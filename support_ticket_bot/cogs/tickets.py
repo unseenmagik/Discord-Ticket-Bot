@@ -24,12 +24,14 @@ class TicketsCog(commands.Cog):
     def __init__(self, bot: "SupportTicketBot"):
         self.bot = bot
         self.cleanup_closed_threads.start()
+        self.dispatch_dashboard_thread_notices.start()
 
     async def cog_load(self) -> None:
         await self.register_persistent_views()
 
     def cog_unload(self) -> None:
         self.cleanup_closed_threads.cancel()
+        self.dispatch_dashboard_thread_notices.cancel()
 
     async def register_persistent_views(self) -> None:
         self.bot.add_view(TicketPanelView(self.bot))
@@ -68,15 +70,18 @@ class TicketsCog(commands.Cog):
         title: str,
         description: str,
         color: int,
-    ) -> None:
+    ) -> bool:
         try:
             await thread.send(embed=self._notice_embed(title, description, color=color))
+            return True
         except discord.HTTPException:
             log.warning("Failed to send embed thread notice title=%s thread_id=%s; falling back to text.", title, thread.id)
             try:
                 await thread.send(f"**{title}**\n{description}")
+                return True
             except discord.HTTPException:
                 log.exception("Failed to send fallback thread notice title=%s thread_id=%s", title, thread.id)
+                return False
 
     async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
         if delete_after is None:
@@ -869,8 +874,34 @@ class TicketsCog(commands.Cog):
                 deleted_by_name="auto-cleanup",
             )
 
+    @tasks.loop(seconds=5)
+    async def dispatch_dashboard_thread_notices(self) -> None:
+        notices = await self.bot.db.list_pending_thread_notices(limit=25)
+        for notice in notices:
+            notice_id = int(notice["id"])
+            thread_id = int(notice["thread_id"])
+            thread = await self._resolve_thread(thread_id)
+            if thread is None:
+                log.warning("Skipping queued dashboard notice for unknown thread_id=%s notice_id=%s", thread_id, notice_id)
+                await self.bot.db.mark_thread_notice_processed(notice_id=notice_id, processed_at=utc_now_iso())
+                continue
+
+            sent = await self._send_thread_notice(
+                thread,
+                title=str(notice["title"]),
+                description=str(notice["description"]),
+                color=int(notice["color"] or self.INFO_EMBED_COLOR),
+            )
+            if not sent:
+                log.warning("Failed to dispatch queued dashboard notice notice_id=%s thread_id=%s", notice_id, thread_id)
+            await self.bot.db.mark_thread_notice_processed(notice_id=notice_id, processed_at=utc_now_iso())
+
     @cleanup_closed_threads.before_loop
     async def before_cleanup(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @dispatch_dashboard_thread_notices.before_loop
+    async def before_dispatch_dashboard_thread_notices(self) -> None:
         await self.bot.wait_until_ready()
 
     @app_commands.command(name="setup_tickets", description="Post the ticket panel")

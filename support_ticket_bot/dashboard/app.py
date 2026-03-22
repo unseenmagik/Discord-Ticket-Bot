@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
-import logging
 from pathlib import Path
 from urllib.parse import quote_plus, urlencode
 
@@ -30,8 +29,6 @@ from support_ticket_bot.dashboard.auth import (
     fetch_discord_member_roles,
     fetch_discord_user,
     load_viewer_from_cookie,
-    post_discord_bot_message,
-    post_discord_bot_embed,
     validate_state_cookie,
 )
 from support_ticket_bot.db import DashboardDatabase
@@ -52,7 +49,6 @@ STATS_RANGE_LABELS = {
     "custom": "Custom range",
 }
 AUDIT_PAGE_SIZE = 5
-log = logging.getLogger(__name__)
 
 
 def _template_context(request: Request, viewer: DashboardViewer | None, **extra: object) -> dict[str, object]:
@@ -114,27 +110,20 @@ def _ticket_detail_url(thread_id: int, *, notice: str | None = None, error: str 
 
 
 async def _post_ticket_thread_notice(
-    settings: BotSettings,
+    db: DashboardDatabase,
     thread_id: int,
     *,
     title: str,
     description: str,
     color: int = INFO_NOTICE_COLOR,
 ) -> None:
-    try:
-        await post_discord_bot_embed(
-            settings.token,
-            thread_id,
-            title=title,
-            description=description,
-            color=color,
-        )
-    except DiscordOAuthError as exc:
-        log.warning("Failed to send dashboard thread embed notice title=%s thread_id=%s: %s", title, thread_id, exc)
-        try:
-            await post_discord_bot_message(settings.token, thread_id, f"**{title}**\n{description}")
-        except DiscordOAuthError:
-            log.exception("Failed to send dashboard fallback thread notice title=%s thread_id=%s", title, thread_id)
+    db.enqueue_thread_notice(
+        thread_id=thread_id,
+        title=title,
+        description=description,
+        color=color,
+        created_at=utc_now_iso(),
+    )
 
 
 def _admin_url(
@@ -317,6 +306,7 @@ async def lifespan(app: FastAPI):
     app.state.db.ensure_dashboard_audit_table()
     app.state.db.ensure_internal_notes_table()
     app.state.db.ensure_tag_tables()
+    app.state.db.ensure_thread_notice_queue_table()
     app.state.db.ensure_ticket_schema_updates()
     yield
 
@@ -630,7 +620,7 @@ def create_app() -> FastAPI:
         viewer: DashboardViewer = Depends(require_viewer),
     ):
         db: DashboardDatabase = request.app.state.db
-        settings: BotSettings = request.app.state.settings
+        db: DashboardDatabase = request.app.state.db
         ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
@@ -652,7 +642,7 @@ def create_app() -> FastAPI:
         )
         action_label = "reassigned" if ticket.get("assignee_discord_user_id") else "assigned"
         await _post_ticket_thread_notice(
-            settings,
+            db,
             thread_id,
             title="Ticket Reassigned" if ticket.get("assignee_discord_user_id") else "Ticket Assigned",
             description=f"This ticket has been {action_label} to <@{viewer.discord_user_id}> by <@{viewer.discord_user_id}>.",
@@ -676,7 +666,7 @@ def create_app() -> FastAPI:
         viewer: DashboardViewer = Depends(require_viewer),
     ):
         db: DashboardDatabase = request.app.state.db
-        settings: BotSettings = request.app.state.settings
+        db: DashboardDatabase = request.app.state.db
         ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
@@ -696,7 +686,7 @@ def create_app() -> FastAPI:
         previous_assignee = ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id")
         db.clear_ticket_assignee(thread_id=thread_id)
         await _post_ticket_thread_notice(
-            settings,
+            db,
             thread_id,
             title="Ticket Unassigned",
             description=f"This ticket has been unassigned by <@{viewer.discord_user_id}>.",
@@ -766,7 +756,7 @@ def create_app() -> FastAPI:
         viewer: DashboardViewer = Depends(require_viewer),
     ):
         db: DashboardDatabase = request.app.state.db
-        settings: BotSettings = request.app.state.settings
+        db: DashboardDatabase = request.app.state.db
         ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
@@ -795,7 +785,7 @@ def create_app() -> FastAPI:
             assigned_by_display_name=viewer.display_name,
         )
         await _post_ticket_thread_notice(
-            settings,
+            db,
             thread_id,
             title="Tag Added",
             description=f'The tag "{tag["tag_name"]}" was added to this ticket by <@{viewer.discord_user_id}>.',
@@ -820,7 +810,7 @@ def create_app() -> FastAPI:
         viewer: DashboardViewer = Depends(require_viewer),
     ):
         db: DashboardDatabase = request.app.state.db
-        settings: BotSettings = request.app.state.settings
+        db: DashboardDatabase = request.app.state.db
         ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
@@ -838,7 +828,7 @@ def create_app() -> FastAPI:
 
         db.remove_ticket_tag(thread_id=thread_id, tag_id=tag_id)
         await _post_ticket_thread_notice(
-            settings,
+            db,
             thread_id,
             title="Tag Removed",
             description=f'The tag "{existing_tag["tag_name"]}" was removed from this ticket by <@{viewer.discord_user_id}>.',
