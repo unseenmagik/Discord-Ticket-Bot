@@ -579,10 +579,21 @@ class TicketsCog(commands.Cog):
             await self._reply(interaction, "This can only be used inside a server.")
             return
         settings = self.bot.settings
-        channel_id = settings.server_targets[chosen_label]
+        channel_id = settings.server_targets.get(chosen_label)
+        if channel_id is None:
+            await self._reply(interaction, "That ticket queue is not configured.")
+            return
+
+        if not isinstance(interaction.user, discord.Member):
+            await self._reply(interaction, "Could not verify your server permissions.")
+            return
+
         target_channel = interaction.guild.get_channel(channel_id)
         if target_channel is None or not isinstance(target_channel, discord.TextChannel):
             await self._reply(interaction, "The configured destination channel is invalid.")
+            return
+        if not target_channel.permissions_for(interaction.user).view_channel:
+            await self._reply(interaction, "You do not have access to that ticket queue.")
             return
 
         try:

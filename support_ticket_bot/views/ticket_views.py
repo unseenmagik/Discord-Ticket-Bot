@@ -12,6 +12,26 @@ def _delete_after(bot: "SupportTicketBot") -> float:
     return bot.settings.interaction_delete_after_seconds
 
 
+def _visible_server_options(bot: "SupportTicketBot", interaction: discord.Interaction) -> list[discord.SelectOption]:
+    if interaction.guild is None:
+        return []
+
+    member = interaction.user if isinstance(interaction.user, discord.Member) else None
+    if member is None:
+        return []
+
+    options: list[discord.SelectOption] = []
+    for label, channel_id in bot.settings.server_targets.items():
+        channel = interaction.guild.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            continue
+        permissions = channel.permissions_for(member)
+        if not permissions.view_channel:
+            continue
+        options.append(discord.SelectOption(label=label, value=label))
+    return options
+
+
 class TicketPanelView(discord.ui.View):
     def __init__(self, bot: "SupportTicketBot"):
         super().__init__(timeout=None)
@@ -26,18 +46,25 @@ class TicketPanelView(discord.ui.View):
                 delete_after=_delete_after(self.bot),
             )
             return
+        options = _visible_server_options(self.bot, interaction)
+        if not options:
+            await interaction.response.send_message(
+                "There are no ticket queues available to your account.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
+            return
         await interaction.response.send_message(
             "Choose which server this ticket is for:",
-            view=ServerSelectView(self.bot),
+            view=ServerSelectView(self.bot, options),
             ephemeral=True,
             delete_after=_delete_after(self.bot),
         )
 
 
 class ServerSelect(discord.ui.Select):
-    def __init__(self, bot: "SupportTicketBot"):
+    def __init__(self, bot: "SupportTicketBot", options: list[discord.SelectOption]):
         self.bot = bot
-        options = [discord.SelectOption(label=label, value=label) for label in bot.settings.server_targets.keys()]
         super().__init__(
             placeholder="Choose which server this ticket is for...",
             min_values=1,
@@ -59,9 +86,9 @@ class ServerSelect(discord.ui.Select):
 
 
 class ServerSelectView(discord.ui.View):
-    def __init__(self, bot: "SupportTicketBot"):
+    def __init__(self, bot: "SupportTicketBot", options: list[discord.SelectOption]):
         super().__init__(timeout=300)
-        self.add_item(ServerSelect(bot))
+        self.add_item(ServerSelect(bot, options))
 
 
 class ThreadCloseView(discord.ui.View):
