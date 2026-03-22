@@ -17,6 +17,10 @@ log = logging.getLogger(__name__)
 
 
 class TicketsCog(commands.Cog):
+    INFO_EMBED_COLOR = 0x3B82F6
+    REOPENED_EMBED_COLOR = 0xF59E0B
+    CLOSED_EMBED_COLOR = 0xEF4444
+
     def __init__(self, bot: "SupportTicketBot"):
         self.bot = bot
         self.cleanup_closed_threads.start()
@@ -51,6 +55,24 @@ class TicketsCog(commands.Cog):
             color=self.bot.settings.embed_color,
             timestamp=datetime.now(timezone.utc),
         )
+
+    def _notice_embed(self, title: str, description: str, *, color: int) -> discord.Embed:
+        embed = self._embed(title, description)
+        embed.color = color
+        return embed
+
+    async def _send_thread_notice(
+        self,
+        thread: discord.Thread,
+        *,
+        title: str,
+        description: str,
+        color: int,
+    ) -> None:
+        try:
+            await thread.send(embed=self._notice_embed(title, description, color=color))
+        except discord.HTTPException:
+            pass
 
     async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
         if delete_after is None:
@@ -345,12 +367,15 @@ class TicketsCog(commands.Cog):
 
         is_reassignment = existing_assignee_id is not None
         action_label = "reassigned" if is_reassignment else "assigned"
-        try:
-            await thread.send(
-                f"This ticket has been {action_label} to {assignee.mention} by {getattr(actor, 'mention', str(actor))}."
-            )
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Ticket Reassigned" if is_reassignment else "Ticket Assigned",
+            description=(
+                f"This ticket has been {action_label} to {assignee.mention} "
+                f"by {getattr(actor, 'mention', str(actor))}."
+            ),
+            color=self.INFO_EMBED_COLOR,
+        )
 
         await self._record_audit_event(
             event_type="ticket_assigned",
@@ -396,10 +421,12 @@ class TicketsCog(commands.Cog):
             assigned_by_discord_user_id=actor.id,
             assigned_by_display_name=getattr(actor, "display_name", str(actor)),
         )
-        try:
-            await thread.send(f'Tag `{tag["tag_name"]}` was added to this ticket by {getattr(actor, "mention", str(actor))}.')
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Tag Added",
+            description=f'Tag `{tag["tag_name"]}` was added to this ticket by {getattr(actor, "mention", str(actor))}.',
+            color=self.INFO_EMBED_COLOR,
+        )
         await self._record_audit_event(
             event_type="ticket_tag_added",
             actor=actor,
@@ -425,12 +452,12 @@ class TicketsCog(commands.Cog):
             return False, f'Tag "{tag["tag_name"]}" is not applied to this ticket.'
 
         await self.bot.db.remove_ticket_tag(thread_id=thread.id, tag_id=tag["id"])
-        try:
-            await thread.send(
-                f'Tag `{tag["tag_name"]}` was removed from this ticket by {getattr(actor, "mention", str(actor))}.'
-            )
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Tag Removed",
+            description=f'Tag `{tag["tag_name"]}` was removed from this ticket by {getattr(actor, "mention", str(actor))}.',
+            color=self.INFO_EMBED_COLOR,
+        )
         await self._record_audit_event(
             event_type="ticket_tag_removed",
             actor=actor,
@@ -717,10 +744,12 @@ class TicketsCog(commands.Cog):
             transcript_message_url=transcript_message_url,
         )
         await self._send_transcript_dm(ticket, transcript_message_url)
-        try:
-            await thread.send(f"Ticket closed by {interaction.user.mention}.")
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Ticket Closed",
+            description=f"This ticket was closed by {interaction.user.mention}.",
+            color=self.CLOSED_EMBED_COLOR,
+        )
         await self._set_thread_controls(thread, closed=True)
         log.info(
             "Ticket closed thread_id=%s guild_id=%s closed_by_id=%s log_message_id=%s",
@@ -748,10 +777,12 @@ class TicketsCog(commands.Cog):
             return
         await self._reply(interaction, "Reopening ticket...")
         await thread.edit(archived=False, locked=False, reason=f"Ticket reopened by {interaction.user}")
-        try:
-            await thread.send(f"Ticket reopened by {interaction.user.mention}.")
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Ticket Reopened",
+            description=f"This ticket was reopened by {interaction.user.mention}.",
+            color=self.REOPENED_EMBED_COLOR,
+        )
         try:
             fetched_thread = await self.bot.fetch_channel(thread.id)
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
@@ -1126,10 +1157,12 @@ class TicketsCog(commands.Cog):
             await self._reply(interaction, f"Failed to add user to ticket: {exc}")
             return
 
-        try:
-            await thread.send(f"{user.mention} has been added to the ticket by {interaction.user.mention}.")
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Member Added",
+            description=f"{user.mention} has been added to this ticket by {interaction.user.mention}.",
+            color=self.INFO_EMBED_COLOR,
+        )
 
         log.info(
             "Ticket user added thread_id=%s guild_id=%s added_user_id=%s added_by_id=%s",
