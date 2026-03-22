@@ -57,3 +57,46 @@ CREATE TABLE IF NOT EXISTS ticket_internal_notes (
     created_at VARCHAR(64) NOT NULL,
     INDEX idx_ticket_internal_notes_thread_created (thread_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_tags (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    tag_key VARCHAR(100) NOT NULL UNIQUE,
+    tag_name VARCHAR(100) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    created_by_discord_user_id BIGINT NULL,
+    created_by_display_name VARCHAR(255) NULL,
+    INDEX idx_ticket_tags_name (tag_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_tag_assignments (
+    ticket_thread_id BIGINT NOT NULL,
+    tag_id BIGINT NOT NULL,
+    assigned_at VARCHAR(64) NOT NULL,
+    assigned_by_discord_user_id BIGINT NULL,
+    assigned_by_display_name VARCHAR(255) NULL,
+    PRIMARY KEY (ticket_thread_id, tag_id),
+    INDEX idx_ticket_tag_assignments_tag_id (tag_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_thread_notices (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    color INT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    processed_at VARCHAR(64) NULL,
+    INDEX idx_ticket_thread_notices_processed_created (processed_at, created_at),
+    INDEX idx_ticket_thread_notices_thread (thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_thread_member_sync (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    discord_user_id BIGINT NOT NULL,
+    action VARCHAR(16) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    processed_at VARCHAR(64) NULL,
+    INDEX idx_ticket_thread_member_sync_processed_created (processed_at, created_at),
+    INDEX idx_ticket_thread_member_sync_thread (thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

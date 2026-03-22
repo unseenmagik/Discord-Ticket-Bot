@@ -267,12 +267,53 @@ async def fetch_member_display_map(bot_token: str, guild_id: int, user_ids: list
     return display_map
 
 
+async def post_discord_bot_message(bot_token: str, channel_id: int, content: str) -> dict[str, Any]:
+    payload = await _discord_request_json(
+        f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
+        method="POST",
+        headers={"Authorization": f"Bot {bot_token}"},
+        json_data={"content": content},
+    )
+    if not isinstance(payload, dict):
+        raise DiscordOAuthError("Discord returned an unexpected message response.")
+    return payload
+
+
+async def post_discord_bot_embed(
+    bot_token: str,
+    channel_id: int,
+    *,
+    title: str,
+    description: str,
+    color: int,
+) -> dict[str, Any]:
+    payload = await _discord_request_json(
+        f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
+        method="POST",
+        headers={"Authorization": f"Bot {bot_token}"},
+        json_data={
+            "embeds": [
+                {
+                    "title": title,
+                    "description": description,
+                    "color": color,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ]
+        },
+    )
+    if not isinstance(payload, dict):
+        raise DiscordOAuthError("Discord returned an unexpected message response.")
+    return payload
+
+
 async def _discord_request_json(
     url: str,
     *,
     method: str = "GET",
     headers: dict[str, str] | None = None,
     form_data: dict[str, str] | None = None,
+    json_data: dict[str, Any] | None = None,
 ) -> Any:
     request_headers = {
         "Accept": "application/json",
@@ -282,6 +323,9 @@ async def _discord_request_json(
     if headers:
         request_headers.update(headers)
     data = urlencode(form_data).encode("utf-8") if form_data else None
+    if json_data is not None:
+        request_headers.setdefault("Content-Type", "application/json")
+        data = json.dumps(json_data).encode("utf-8")
 
     def _run() -> Any:
         request = Request(url, data=data, headers=request_headers, method=method)

@@ -17,15 +17,23 @@ log = logging.getLogger(__name__)
 
 
 class TicketsCog(commands.Cog):
+    INFO_EMBED_COLOR = 0x3B82F6
+    REOPENED_EMBED_COLOR = 0xF59E0B
+    CLOSED_EMBED_COLOR = 0xEF4444
+
     def __init__(self, bot: "SupportTicketBot"):
         self.bot = bot
         self.cleanup_closed_threads.start()
+        self.dispatch_dashboard_thread_notices.start()
+        self.sync_dashboard_thread_members.start()
 
     async def cog_load(self) -> None:
         await self.register_persistent_views()
 
     def cog_unload(self) -> None:
         self.cleanup_closed_threads.cancel()
+        self.dispatch_dashboard_thread_notices.cancel()
+        self.sync_dashboard_thread_members.cancel()
 
     async def register_persistent_views(self) -> None:
         self.bot.add_view(TicketPanelView(self.bot))
@@ -51,6 +59,31 @@ class TicketsCog(commands.Cog):
             color=self.bot.settings.embed_color,
             timestamp=datetime.now(timezone.utc),
         )
+
+    def _notice_embed(self, title: str, description: str, *, color: int) -> discord.Embed:
+        embed = self._embed(title, description)
+        embed.color = color
+        return embed
+
+    async def _send_thread_notice(
+        self,
+        thread: discord.Thread,
+        *,
+        title: str,
+        description: str,
+        color: int,
+    ) -> bool:
+        try:
+            await thread.send(embed=self._notice_embed(title, description, color=color))
+            return True
+        except discord.HTTPException:
+            log.warning("Failed to send embed thread notice title=%s thread_id=%s; falling back to text.", title, thread.id)
+            try:
+                await thread.send(f"**{title}**\n{description}")
+                return True
+            except discord.HTTPException:
+                log.exception("Failed to send fallback thread notice title=%s thread_id=%s", title, thread.id)
+                return False
 
     async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
         if delete_after is None:
@@ -96,7 +129,16 @@ class TicketsCog(commands.Cog):
                         return message
         return None
 
-    async def _set_thread_controls(self, thread: discord.Thread, *, closed: bool) -> None:
+    async def _set_thread_controls(
+        self,
+        thread: discord.Thread,
+        *,
+        closed: bool,
+        skip_archived: bool = True,
+    ) -> None:
+        if skip_archived and thread.archived:
+            return
+
         control_message = await self._find_thread_control_message(thread, thread.id)
         if control_message is None:
             return
@@ -105,7 +147,10 @@ class TicketsCog(commands.Cog):
         self.bot.add_view(view)
         try:
             await control_message.edit(view=view)
-        except discord.HTTPException:
+        except discord.HTTPException as exc:
+            if getattr(exc, "code", None) == 50083:
+                log.debug("Skipped updating thread controls for archived thread_id=%s", thread.id)
+                return
             log.exception("Failed to update thread controls for thread_id=%s", thread.id)
 
     async def _delete_seed_message(self, ticket: dict) -> None:
@@ -172,6 +217,15 @@ class TicketsCog(commands.Cog):
             return user
         try:
             return await self.bot.fetch_user(user_id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            return None
+
+    async def _resolve_guild_member(self, guild: discord.Guild, user_id: int) -> discord.Member | None:
+        member = guild.get_member(user_id)
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(user_id)
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
             return None
 
@@ -333,12 +387,15 @@ class TicketsCog(commands.Cog):
 
         is_reassignment = existing_assignee_id is not None
         action_label = "reassigned" if is_reassignment else "assigned"
-        try:
-            await thread.send(
-                f"This ticket has been {action_label} to {assignee.mention} by {getattr(actor, 'mention', str(actor))}."
-            )
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Ticket Reassigned" if is_reassignment else "Ticket Assigned",
+            description=(
+                f"This ticket has been {action_label} to {assignee.mention} "
+                f"by {getattr(actor, 'mention', str(actor))}."
+            ),
+            color=self.INFO_EMBED_COLOR,
+        )
 
         await self._record_audit_event(
             event_type="ticket_assigned",
@@ -360,6 +417,100 @@ class TicketsCog(commands.Cog):
             is_reassignment,
         )
         return True, f"Assigned {thread.mention} to {assignee.mention}."
+
+    async def _add_tag_to_ticket(
+        self,
+        *,
+        thread: discord.Thread,
+        ticket: dict,
+        tag: dict[str, Any],
+        actor: discord.abc.User,
+        source: str,
+    ) -> tuple[bool, str]:
+        if ticket["status"] != "open":
+            return False, "Only open tickets can be updated."
+
+        existing_tags = await self.bot.db.list_ticket_tags(thread.id)
+        if any(existing["id"] == tag["id"] for existing in existing_tags):
+            return False, f'Tag "{tag["tag_name"]}" is already applied to this ticket.'
+
+        await self.bot.db.add_ticket_tag(
+            thread_id=thread.id,
+            tag_id=tag["id"],
+            assigned_at=utc_now_iso(),
+            assigned_by_discord_user_id=actor.id,
+            assigned_by_display_name=getattr(actor, "display_name", str(actor)),
+        )
+        await self._send_thread_notice(
+            thread,
+            title="Tag Added",
+            description=f'The tag "{tag["tag_name"]}" was added to this ticket by {getattr(actor, "mention", str(actor))}.',
+            color=self.INFO_EMBED_COLOR,
+        )
+        await self._record_audit_event(
+            event_type="ticket_tag_added",
+            actor=actor,
+            ticket_thread_id=thread.id,
+            metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": source},
+        )
+        return True, f'Added tag "{tag["tag_name"]}" to {thread.mention}.'
+
+    async def _remove_tag_from_ticket(
+        self,
+        *,
+        thread: discord.Thread,
+        ticket: dict,
+        tag: dict[str, Any],
+        actor: discord.abc.User,
+        source: str,
+    ) -> tuple[bool, str]:
+        if ticket["status"] != "open":
+            return False, "Only open tickets can be updated."
+
+        existing_tags = await self.bot.db.list_ticket_tags(thread.id)
+        if not any(existing["id"] == tag["id"] for existing in existing_tags):
+            return False, f'Tag "{tag["tag_name"]}" is not applied to this ticket.'
+
+        await self.bot.db.remove_ticket_tag(thread_id=thread.id, tag_id=tag["id"])
+        await self._send_thread_notice(
+            thread,
+            title="Tag Removed",
+            description=f'The tag "{tag["tag_name"]}" was removed from this ticket by {getattr(actor, "mention", str(actor))}.',
+            color=self.INFO_EMBED_COLOR,
+        )
+        await self._record_audit_event(
+            event_type="ticket_tag_removed",
+            actor=actor,
+            ticket_thread_id=thread.id,
+            metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": source},
+        )
+        return True, f'Removed tag "{tag["tag_name"]}" from {thread.mention}.'
+
+    async def _tag_name_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+        *,
+        assigned_only: bool = False,
+        unassigned_only: bool = False,
+    ) -> list[app_commands.Choice[str]]:
+        if assigned_only and isinstance(interaction.channel, discord.Thread):
+            tags = await self.bot.db.list_ticket_tags(interaction.channel.id)
+        else:
+            tags = await self.bot.db.list_tag_definitions()
+
+        if unassigned_only and isinstance(interaction.channel, discord.Thread):
+            assigned_tag_ids = {tag["id"] for tag in await self.bot.db.list_ticket_tags(interaction.channel.id)}
+            tags = [tag for tag in tags if tag["id"] not in assigned_tag_ids]
+
+        needle = current.casefold().strip()
+        if needle:
+            tags = [tag for tag in tags if needle in str(tag["tag_name"]).casefold()]
+
+        return [
+            app_commands.Choice(name=str(tag["tag_name"]), value=str(tag["tag_name"]))
+            for tag in tags[:25]
+        ]
 
     def _member_has_staff_ticket_access(
         self,
@@ -613,10 +764,12 @@ class TicketsCog(commands.Cog):
             transcript_message_url=transcript_message_url,
         )
         await self._send_transcript_dm(ticket, transcript_message_url)
-        try:
-            await thread.send(f"Ticket closed by {interaction.user.mention}.")
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Ticket Closed",
+            description=f"This ticket was closed by {interaction.user.mention}.",
+            color=self.CLOSED_EMBED_COLOR,
+        )
         await self._set_thread_controls(thread, closed=True)
         log.info(
             "Ticket closed thread_id=%s guild_id=%s closed_by_id=%s log_message_id=%s",
@@ -644,12 +797,18 @@ class TicketsCog(commands.Cog):
             return
         await self._reply(interaction, "Reopening ticket...")
         await thread.edit(archived=False, locked=False, reason=f"Ticket reopened by {interaction.user}")
+        await self._send_thread_notice(
+            thread,
+            title="Ticket Reopened",
+            description=f"This ticket was reopened by {interaction.user.mention}.",
+            color=self.REOPENED_EMBED_COLOR,
+        )
         try:
-            await thread.send(f"Ticket reopened by {interaction.user.mention}.")
-        except discord.HTTPException:
-            pass
-        refreshed_thread = await self._resolve_thread(thread.id)
-        await self._set_thread_controls(refreshed_thread or thread, closed=False)
+            fetched_thread = await self.bot.fetch_channel(thread.id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            fetched_thread = None
+        refreshed_thread = fetched_thread if isinstance(fetched_thread, discord.Thread) else await self._resolve_thread(thread.id)
+        await self._set_thread_controls(refreshed_thread or thread, closed=False, skip_archived=False)
         await self.bot.db.reopen_ticket(
             thread_id=thread.id,
             reopened_at=utc_now_iso(),
@@ -726,8 +885,81 @@ class TicketsCog(commands.Cog):
                 deleted_by_name="auto-cleanup",
             )
 
+    @tasks.loop(seconds=5)
+    async def dispatch_dashboard_thread_notices(self) -> None:
+        notices = await self.bot.db.list_pending_thread_notices(limit=25)
+        for notice in notices:
+            notice_id = int(notice["id"])
+            thread_id = int(notice["thread_id"])
+            thread = await self._resolve_thread(thread_id)
+            if thread is None:
+                log.warning("Skipping queued dashboard notice for unknown thread_id=%s notice_id=%s", thread_id, notice_id)
+                await self.bot.db.mark_thread_notice_processed(notice_id=notice_id, processed_at=utc_now_iso())
+                continue
+
+            sent = await self._send_thread_notice(
+                thread,
+                title=str(notice["title"]),
+                description=str(notice["description"]),
+                color=int(notice["color"] or self.INFO_EMBED_COLOR),
+            )
+            if not sent:
+                log.warning("Failed to dispatch queued dashboard notice notice_id=%s thread_id=%s", notice_id, thread_id)
+            await self.bot.db.mark_thread_notice_processed(notice_id=notice_id, processed_at=utc_now_iso())
+
+    @tasks.loop(seconds=5)
+    async def sync_dashboard_thread_members(self) -> None:
+        jobs = await self.bot.db.list_pending_thread_member_syncs(limit=25)
+        for job in jobs:
+            sync_id = int(job["id"])
+            thread_id = int(job["thread_id"])
+            discord_user_id = int(job["discord_user_id"])
+            action = str(job["action"]).lower()
+
+            thread = await self._resolve_thread(thread_id)
+            if thread is None:
+                log.warning("Skipping queued thread member sync for unknown thread_id=%s sync_id=%s", thread_id, sync_id)
+                await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
+                continue
+
+            member = await self._resolve_guild_member(thread.guild, discord_user_id)
+            if member is None:
+                log.warning(
+                    "Skipping queued thread member sync for unknown discord_user_id=%s thread_id=%s sync_id=%s",
+                    discord_user_id,
+                    thread_id,
+                    sync_id,
+                )
+                await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
+                continue
+
+            try:
+                if action == "add":
+                    await thread.add_user(member)
+                elif action == "remove":
+                    await thread.remove_user(member)
+                else:
+                    log.warning("Skipping queued thread member sync with unknown action=%s sync_id=%s", action, sync_id)
+            except discord.HTTPException:
+                log.exception(
+                    "Failed to process queued thread member sync action=%s thread_id=%s discord_user_id=%s sync_id=%s",
+                    action,
+                    thread_id,
+                    discord_user_id,
+                    sync_id,
+                )
+            await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
+
     @cleanup_closed_threads.before_loop
     async def before_cleanup(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @dispatch_dashboard_thread_notices.before_loop
+    async def before_dispatch_dashboard_thread_notices(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @sync_dashboard_thread_members.before_loop
+    async def before_sync_dashboard_thread_members(self) -> None:
         await self.bot.wait_until_ready()
 
     @app_commands.command(name="setup_tickets", description="Post the ticket panel")
@@ -813,6 +1045,8 @@ class TicketsCog(commands.Cog):
         if ticket is None:
             await self._reply(interaction, "This thread is not tracked as a ticket.")
             return
+        ticket_tags = await self.bot.db.list_ticket_tags(interaction.channel.id)
+        tags_text = ", ".join(tag["tag_name"] for tag in ticket_tags) if ticket_tags else "None"
         embed = self._embed(
             "Ticket Info",
             (
@@ -820,12 +1054,73 @@ class TicketsCog(commands.Cog):
                 f"**Status:** {ticket['status']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
                 f"**Server:** {ticket['server_label']}\n"
+                f"**Tags:** {tags_text}\n"
                 f"**Assignee:** {ticket.get('assignee_display_name') or 'Unassigned'}\n"
                 f"**Created:** {ticket['created_at']}\n"
                 f"**Closed:** {ticket.get('closed_at') or 'N/A'}"
             ),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="list_tags", description="List all managed ticket tags")
+    async def list_tags(self, interaction: discord.Interaction) -> None:
+        tags = await self.bot.db.list_tag_definitions()
+        if not tags:
+            await self._reply(interaction, "No managed tags have been created yet.")
+            return
+        embed = self._embed(
+            "Managed Tags",
+            "\n".join(f"- `{tag['tag_name']}`" for tag in tags),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="create_tag", description="Create a managed ticket tag")
+    @app_commands.default_permissions(administrator=True)
+    async def create_tag(self, interaction: discord.Interaction, name: str) -> None:
+        cleaned_name = " ".join(name.strip().split())
+        if not cleaned_name:
+            await self._reply(interaction, "Tag name cannot be empty.")
+            return
+        existing = await self.bot.db.get_tag_definition_by_name(cleaned_name)
+        if existing is not None:
+            await self._reply(interaction, f'Tag "{existing["tag_name"]}" already exists.')
+            return
+
+        created = await self.bot.db.create_tag_definition(
+            tag_name=cleaned_name,
+            created_by_discord_user_id=interaction.user.id,
+            created_by_display_name=getattr(interaction.user, "display_name", str(interaction.user)),
+            created_at=utc_now_iso(),
+        )
+        await self._record_audit_event(
+            event_type="tag_created",
+            actor=interaction.user,
+            metadata={"tag_id": created["id"], "tag_name": created["tag_name"], "source": "discord_slash_command"},
+        )
+        await self._reply(interaction, f'Created tag "{created["tag_name"]}".')
+
+    @app_commands.command(name="delete_tag", description="Delete a managed ticket tag")
+    @app_commands.default_permissions(administrator=True)
+    async def delete_tag(self, interaction: discord.Interaction, name: str) -> None:
+        tag = await self.bot.db.get_tag_definition_by_name(name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+        await self.bot.db.delete_tag_definition(tag["id"])
+        await self._record_audit_event(
+            event_type="tag_deleted",
+            actor=interaction.user,
+            metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": "discord_slash_command"},
+        )
+        await self._reply(interaction, f'Deleted tag "{tag["tag_name"]}".')
+
+    @delete_tag.autocomplete("name")
+    async def delete_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current)
 
     @app_commands.command(name="assign_ticket", description="Assign the current ticket to yourself or another user")
     async def assign_ticket(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
@@ -854,6 +1149,80 @@ class TicketsCog(commands.Cog):
         )
         await self._reply(interaction, message)
 
+    @app_commands.command(name="add_ticket_tag", description="Add a managed tag to the current ticket")
+    async def add_ticket_tag(self, interaction: discord.Interaction, tag_name: str) -> None:
+        if not isinstance(interaction.channel, discord.Thread):
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
+            return
+
+        thread = interaction.channel
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
+            return
+        if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
+            await self._reply(interaction, "You do not have permission to update ticket tags.")
+            return
+
+        tag = await self.bot.db.get_tag_definition_by_name(tag_name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+
+        added, message = await self._add_tag_to_ticket(
+            thread=thread,
+            ticket=ticket,
+            tag=tag,
+            actor=interaction.user,
+            source="discord_slash_command",
+        )
+        await self._reply(interaction, message)
+
+    @add_ticket_tag.autocomplete("tag_name")
+    async def add_ticket_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current, unassigned_only=True)
+
+    @app_commands.command(name="remove_ticket_tag", description="Remove a managed tag from the current ticket")
+    async def remove_ticket_tag(self, interaction: discord.Interaction, tag_name: str) -> None:
+        if not isinstance(interaction.channel, discord.Thread):
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
+            return
+
+        thread = interaction.channel
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
+            return
+        if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
+            await self._reply(interaction, "You do not have permission to update ticket tags.")
+            return
+
+        tag = await self.bot.db.get_tag_definition_by_name(tag_name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+
+        removed, message = await self._remove_tag_from_ticket(
+            thread=thread,
+            ticket=ticket,
+            tag=tag,
+            actor=interaction.user,
+            source="discord_slash_command",
+        )
+        await self._reply(interaction, message)
+
+    @remove_ticket_tag.autocomplete("tag_name")
+    async def remove_ticket_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current, assigned_only=True)
+
     @app_commands.command(name="add_ticket_user", description="Add a user to the current ticket thread")
     async def add_ticket_user(self, interaction: discord.Interaction, user: discord.Member) -> None:
         if not isinstance(interaction.channel, discord.Thread):
@@ -881,10 +1250,12 @@ class TicketsCog(commands.Cog):
             await self._reply(interaction, f"Failed to add user to ticket: {exc}")
             return
 
-        try:
-            await thread.send(f"{user.mention} has been added to the ticket by {interaction.user.mention}.")
-        except discord.HTTPException:
-            pass
+        await self._send_thread_notice(
+            thread,
+            title="Member Added",
+            description=f"{user.mention} has been added to this ticket by {interaction.user.mention}.",
+            color=self.INFO_EMBED_COLOR,
+        )
 
         log.info(
             "Ticket user added thread_id=%s guild_id=%s added_user_id=%s added_by_id=%s",

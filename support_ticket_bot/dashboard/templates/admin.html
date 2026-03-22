@@ -6,6 +6,12 @@
 {% if saved %}
 <div class="notice">Message templates saved. New panels and new tickets will use the updated text.</div>
 {% endif %}
+{% if notice %}
+<div class="notice">{{ notice }}</div>
+{% endif %}
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% endif %}
 
 <div class="split section-gap">
     <div class="card">
@@ -139,6 +145,32 @@
         <p class="muted">No dashboard audit events have been recorded yet.</p>
         {% endif %}
     </div>
+</div>
+
+<div class="card section-gap">
+    <h2>Managed Tags</h2>
+    <p class="muted">Create reusable ticket tags here. Staff can apply these tags to tickets from Discord or the dashboard.</p>
+    <form class="inline-action-form" method="post" action="/admin/tags">
+        <input name="tag_name" type="text" placeholder="e.g. Billing, Escalated, Waiting on user" required>
+        <button type="submit">Create tag</button>
+    </form>
+    {% if tag_definitions %}
+    <div class="tag-list">
+        {% for tag in tag_definitions %}
+        <div class="tag-row">
+            <div>
+                <span class="tag-pill">{{ tag.tag_name }}</span>
+                <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+            </div>
+            <form method="post" action="/admin/tags/{{ tag.id }}/delete">
+                <button class="button-secondary" type="submit">Delete</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="tight-muted">No tags have been created yet.</p>
+    {% endif %}
 </div>
 
 <div class="card">

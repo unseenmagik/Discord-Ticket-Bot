@@ -13,6 +13,16 @@
         <div class="label">Status</div><div class="value"><span class="pill {{ ticket.status }}">{{ ticket.status }}</span></div>
         <div class="label">Server</div><div class="value">{{ ticket.server_label }}</div>
         <div class="label">Opened by</div><div class="value">{{ ticket.opener_name }} ({{ ticket.opener_id }})</div>
+        <div class="label">Tags</div>
+        <div class="value">
+            {% if ticket.tags %}
+                {% for tag in ticket.tags %}
+                <span class="tag-pill">{{ tag.tag_name }}</span>
+                {% endfor %}
+            {% else %}
+            —
+            {% endif %}
+        </div>
         {% if can_manage_ticket %}
         <div class="label">Assignee</div><div class="value">{{ ticket.assignee_display_name or 'Unassigned' }}</div>
         <div class="label">Assigned at</div><div class="value">{{ ticket.assigned_at or '—' }}</div>
@@ -48,6 +58,25 @@
     <div class="card">
         <h2>Assignment</h2>
         <p class="muted">Claim this ticket for yourself or clear the current owner.</p>
+        {% if ticket.assignee_discord_user_id %}
+        <div class="note-item" style="margin-bottom: 16px;">
+            <div class="note-meta">Current assignee</div>
+            <div class="note-body">
+                {{ ticket.assignee_display_name or 'Unknown user' }}
+                (<code>{{ ticket.assignee_discord_user_id }}</code>)
+                {% if ticket.assigned_at %}
+                <br>
+                Assigned {{ ticket.assigned_at }}
+                {% endif %}
+                {% if ticket.assigned_by_display_name %}
+                <br>
+                Assigned by {{ ticket.assigned_by_display_name }}
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <p class="tight-muted">No one is currently assigned to this ticket.</p>
+        {% endif %}
         <div class="button-row">
             <form method="post" action="/tickets/{{ ticket.thread_id }}/assign">
                 <button type="submit" {% if ticket.status != 'open' %}disabled{% endif %}>Assign to me</button>
@@ -58,6 +87,42 @@
         </div>
         {% if ticket.status != 'open' %}
         <p class="tight-muted">Assignment changes are only available while the ticket is open.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Tags</h2>
+        <p class="muted">Apply managed tags to keep the queue organized.</p>
+        {% if available_tags %}
+        <form class="inline-action-form" method="post" action="/tickets/{{ ticket.thread_id }}/tags">
+            <select name="tag_id" {% if ticket.status != 'open' %}disabled{% endif %}>
+                {% for tag in available_tags %}
+                    {% if tag.id not in current_tag_ids %}
+                    <option value="{{ tag.id }}">{{ tag.tag_name }}</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+            <button type="submit" {% if ticket.status != 'open' or current_tag_ids|length == available_tags|length %}disabled{% endif %}>Add tag</button>
+        </form>
+        {% else %}
+        <p class="tight-muted">No tags have been created yet in Admin.</p>
+        {% endif %}
+        {% if ticket.tags %}
+        <div class="tag-list">
+            {% for tag in ticket.tags %}
+            <div class="tag-row">
+                <div>
+                    <span class="tag-pill">{{ tag.tag_name }}</span>
+                    <div class="tag-meta">Added {{ tag.assigned_at }}{% if tag.assigned_by_display_name %} by {{ tag.assigned_by_display_name }}{% endif %}</div>
+                </div>
+                <form method="post" action="/tickets/{{ ticket.thread_id }}/tags/{{ tag.id }}/remove">
+                    <button class="button-secondary" type="submit" {% if ticket.status != 'open' %}disabled{% endif %}>Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="tight-muted">No tags applied yet.</p>
         {% endif %}
     </div>
 
