@@ -96,7 +96,16 @@ class TicketsCog(commands.Cog):
                         return message
         return None
 
-    async def _set_thread_controls(self, thread: discord.Thread, *, closed: bool) -> None:
+    async def _set_thread_controls(
+        self,
+        thread: discord.Thread,
+        *,
+        closed: bool,
+        skip_archived: bool = True,
+    ) -> None:
+        if skip_archived and thread.archived:
+            return
+
         control_message = await self._find_thread_control_message(thread, thread.id)
         if control_message is None:
             return
@@ -105,7 +114,10 @@ class TicketsCog(commands.Cog):
         self.bot.add_view(view)
         try:
             await control_message.edit(view=view)
-        except discord.HTTPException:
+        except discord.HTTPException as exc:
+            if getattr(exc, "code", None) == 50083:
+                log.debug("Skipped updating thread controls for archived thread_id=%s", thread.id)
+                return
             log.exception("Failed to update thread controls for thread_id=%s", thread.id)
 
     async def _delete_seed_message(self, ticket: dict) -> None:
@@ -427,6 +439,32 @@ class TicketsCog(commands.Cog):
         )
         return True, f'Removed tag "{tag["tag_name"]}" from {thread.mention}.'
 
+    async def _tag_name_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+        *,
+        assigned_only: bool = False,
+        unassigned_only: bool = False,
+    ) -> list[app_commands.Choice[str]]:
+        if assigned_only and isinstance(interaction.channel, discord.Thread):
+            tags = await self.bot.db.list_ticket_tags(interaction.channel.id)
+        else:
+            tags = await self.bot.db.list_tag_definitions()
+
+        if unassigned_only and isinstance(interaction.channel, discord.Thread):
+            assigned_tag_ids = {tag["id"] for tag in await self.bot.db.list_ticket_tags(interaction.channel.id)}
+            tags = [tag for tag in tags if tag["id"] not in assigned_tag_ids]
+
+        needle = current.casefold().strip()
+        if needle:
+            tags = [tag for tag in tags if needle in str(tag["tag_name"]).casefold()]
+
+        return [
+            app_commands.Choice(name=str(tag["tag_name"]), value=str(tag["tag_name"]))
+            for tag in tags[:25]
+        ]
+
     def _member_has_staff_ticket_access(
         self,
         member: discord.Member,
@@ -714,8 +752,12 @@ class TicketsCog(commands.Cog):
             await thread.send(f"Ticket reopened by {interaction.user.mention}.")
         except discord.HTTPException:
             pass
-        refreshed_thread = await self._resolve_thread(thread.id)
-        await self._set_thread_controls(refreshed_thread or thread, closed=False)
+        try:
+            fetched_thread = await self.bot.fetch_channel(thread.id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            fetched_thread = None
+        refreshed_thread = fetched_thread if isinstance(fetched_thread, discord.Thread) else await self._resolve_thread(thread.id)
+        await self._set_thread_controls(refreshed_thread or thread, closed=False, skip_archived=False)
         await self.bot.db.reopen_ticket(
             thread_id=thread.id,
             reopened_at=utc_now_iso(),
@@ -948,6 +990,14 @@ class TicketsCog(commands.Cog):
         )
         await self._reply(interaction, f'Deleted tag "{tag["tag_name"]}".')
 
+    @delete_tag.autocomplete("name")
+    async def delete_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current)
+
     @app_commands.command(name="assign_ticket", description="Assign the current ticket to yourself or another user")
     async def assign_ticket(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
         if not isinstance(interaction.channel, discord.Thread):
@@ -1004,6 +1054,14 @@ class TicketsCog(commands.Cog):
         )
         await self._reply(interaction, message)
 
+    @add_ticket_tag.autocomplete("tag_name")
+    async def add_ticket_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current, unassigned_only=True)
+
     @app_commands.command(name="remove_ticket_tag", description="Remove a managed tag from the current ticket")
     async def remove_ticket_tag(self, interaction: discord.Interaction, tag_name: str) -> None:
         if not isinstance(interaction.channel, discord.Thread):
@@ -1032,6 +1090,14 @@ class TicketsCog(commands.Cog):
             source="discord_slash_command",
         )
         await self._reply(interaction, message)
+
+    @remove_ticket_tag.autocomplete("tag_name")
+    async def remove_ticket_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current, assigned_only=True)
 
     @app_commands.command(name="add_ticket_user", description="Add a user to the current ticket thread")
     async def add_ticket_user(self, interaction: discord.Interaction, user: discord.Member) -> None:
