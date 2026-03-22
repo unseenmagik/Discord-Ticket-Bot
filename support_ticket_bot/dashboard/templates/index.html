@@ -47,9 +47,11 @@
             <td>{{ ticket.opener_name }}</td>
             <td>
                 {% if ticket.tags %}
+                    <div class="tag-cluster">
                     {% for tag in ticket.tags %}
                     <span class="tag-pill">{{ tag.tag_name }}</span>
                     {% endfor %}
+                    </div>
                 {% else %}
                 —
                 {% endif %}
