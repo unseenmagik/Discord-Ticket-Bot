@@ -176,6 +176,7 @@ Ticket lifecycle events such as open, close, reopen, and delete are logged there
 - `/assign_ticket`
 - `/list_tags`
 - `/create_tag`
+- `/edit_tag`
 - `/delete_tag`
 - `/add_ticket_tag`
 - `/remove_ticket_tag`
@@ -247,7 +248,7 @@ These dashboard-originated Discord updates are queued in the database and then d
 Admins can manage the available tag list from:
 
 - the `Admin` page in the dashboard
-- `/create_tag`, `/delete_tag`, and `/list_tags` in Discord
+- `/create_tag`, `/edit_tag`, `/delete_tag`, and `/list_tags` in Discord
 
 To access the WebUI:
 

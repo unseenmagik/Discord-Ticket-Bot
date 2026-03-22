@@ -615,6 +615,20 @@ class TicketDatabase:
         assert created is not None
         return created
 
+    async def update_tag_definition(self, *, tag_id: int, tag_name: str) -> dict[str, Any] | None:
+        clean_name = _clean_tag_name(tag_name)
+        key = _tag_key(clean_name)
+        await self.execute(
+            """
+            UPDATE ticket_tags
+            SET tag_key = %s,
+                tag_name = %s
+            WHERE id = %s
+            """,
+            (key, clean_name, tag_id),
+        )
+        return await self.fetchone("SELECT * FROM ticket_tags WHERE id = %s LIMIT 1", (tag_id,))
+
     async def delete_tag_definition(self, tag_id: int) -> None:
         await self.execute("DELETE FROM ticket_tag_assignments WHERE tag_id = %s", (tag_id,))
         await self.execute("DELETE FROM ticket_tags WHERE id = %s", (tag_id,))
@@ -1138,6 +1152,24 @@ class DashboardDatabase:
         created = self.get_tag_definition_by_name(clean_name)
         assert created is not None
         return created
+
+    def update_tag_definition(self, *, tag_id: int, tag_name: str) -> dict[str, Any] | None:
+        self.ensure_tag_tables()
+        clean_name = _clean_tag_name(tag_name)
+        key = _tag_key(clean_name)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE ticket_tags
+                    SET tag_key = %s,
+                        tag_name = %s
+                    WHERE id = %s
+                    """,
+                    (key, clean_name, tag_id),
+                )
+                cur.execute("SELECT * FROM ticket_tags WHERE id = %s LIMIT 1", (tag_id,))
+                return cur.fetchone()
 
     def delete_tag_definition(self, tag_id: int) -> None:
         self.ensure_tag_tables()

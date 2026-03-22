@@ -1298,6 +1298,52 @@ class TicketsCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         return await self._tag_name_autocomplete(interaction, current)
 
+    @app_commands.command(name="edit_tag", description="Rename a managed ticket tag")
+    @app_commands.default_permissions(administrator=True)
+    async def edit_tag(self, interaction: discord.Interaction, current_name: str, new_name: str) -> None:
+        tag = await self.bot.db.get_tag_definition_by_name(current_name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+
+        cleaned_name = " ".join(new_name.strip().split())
+        if not cleaned_name:
+            await self._reply(interaction, "New tag name cannot be empty.")
+            return
+        if cleaned_name == str(tag["tag_name"]):
+            await self._reply(interaction, "That tag already has this name.")
+            return
+
+        existing = await self.bot.db.get_tag_definition_by_name(cleaned_name)
+        if existing is not None and existing["id"] != tag["id"]:
+            await self._reply(interaction, f'Tag "{existing["tag_name"]}" already exists.')
+            return
+
+        updated = await self.bot.db.update_tag_definition(tag_id=tag["id"], tag_name=cleaned_name)
+        if updated is None:
+            await self._reply(interaction, "Tag could not be updated.")
+            return
+
+        await self._record_audit_event(
+            event_type="tag_updated",
+            actor=interaction.user,
+            metadata={
+                "tag_id": tag["id"],
+                "old_tag_name": tag["tag_name"],
+                "new_tag_name": updated["tag_name"],
+                "source": "discord_slash_command",
+            },
+        )
+        await self._reply(interaction, f'Renamed tag "{tag["tag_name"]}" to "{updated["tag_name"]}".')
+
+    @edit_tag.autocomplete("current_name")
+    async def edit_tag_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._tag_name_autocomplete(interaction, current)
+
     @app_commands.command(name="assign_ticket", description="Assign the current ticket to yourself or another user")
     async def assign_ticket(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
         if not isinstance(interaction.channel, discord.Thread):

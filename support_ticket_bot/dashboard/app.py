@@ -591,6 +591,48 @@ def create_app() -> FastAPI:
         )
         return RedirectResponse(url=_admin_url(notice=f'Tag "{created["tag_name"]}" created.'), status_code=303)
 
+    @app.post("/admin/tags/{tag_id}/edit")
+    async def edit_admin_tag(
+        tag_id: int,
+        request: Request,
+        tag_name: str = Form(...),
+        viewer: DashboardViewer = Depends(require_admin),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        tag = next((item for item in db.list_tag_definitions() if item["id"] == tag_id), None)
+        if tag is None:
+            return RedirectResponse(url=_admin_url(error="Tag not found."), status_code=303)
+
+        cleaned_name = " ".join(tag_name.strip().split())
+        if not cleaned_name:
+            return RedirectResponse(url=_admin_url(error="Tag name cannot be empty."), status_code=303)
+
+        existing = db.get_tag_definition_by_name(cleaned_name)
+        if existing is not None and existing["id"] != tag_id:
+            return RedirectResponse(
+                url=_admin_url(error=f'Tag "{existing["tag_name"]}" already exists.'),
+                status_code=303,
+            )
+
+        updated = db.update_tag_definition(tag_id=tag_id, tag_name=cleaned_name)
+        if updated is None:
+            return RedirectResponse(url=_admin_url(error="Tag could not be updated."), status_code=303)
+
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="tag_updated",
+            metadata={
+                "tag_id": tag_id,
+                "old_tag_name": tag["tag_name"],
+                "new_tag_name": updated["tag_name"],
+            },
+        )
+        return RedirectResponse(
+            url=_admin_url(notice=f'Tag "{tag["tag_name"]}" renamed to "{updated["tag_name"]}".'),
+            status_code=303,
+        )
+
     @app.post("/admin/tags/{tag_id}/delete")
     async def delete_admin_tag(
         tag_id: int,
