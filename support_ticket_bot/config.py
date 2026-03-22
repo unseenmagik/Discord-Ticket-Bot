@@ -93,7 +93,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         "tickets", "delete_closed_threads_after_hours", fallback=72
     )
     allow_thread_owner_close = _parse_bool(config, "tickets", "allow_thread_owner_close", True)
-    allow_thread_owner_reopen = _parse_bool(config, "tickets", "allow_thread_owner_reopen", False)
+    allow_thread_owner_reopen = _parse_bool(config, "tickets", "allow_thread_owner_reopen", True)
     close_requires_staff = _parse_bool(config, "tickets", "close_requires_staff", False)
     interaction_delete_after_seconds = config.getfloat("tickets", "interaction_delete_after_seconds", fallback=30.0)
 

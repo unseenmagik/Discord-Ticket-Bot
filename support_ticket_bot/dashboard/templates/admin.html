@@ -158,13 +158,19 @@
     <div class="tag-list">
         {% for tag in tag_definitions %}
         <div class="tag-row">
-            <div>
+            <div class="tag-row-main">
                 <span class="tag-pill">{{ tag.tag_name }}</span>
                 <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
             </div>
-            <form method="post" action="/admin/tags/{{ tag.id }}/delete">
-                <button class="button-secondary" type="submit">Delete</button>
-            </form>
+            <div class="tag-row-actions">
+                <form class="tag-edit-form" method="post" action="/admin/tags/{{ tag.id }}/edit">
+                    <input name="tag_name" type="text" value="{{ tag.tag_name }}" required>
+                    <button class="button-secondary" type="submit">Save</button>
+                </form>
+                <form class="tag-delete-form" method="post" action="/admin/tags/{{ tag.id }}/delete">
+                    <button class="button-secondary" type="submit">Delete</button>
+                </form>
+            </div>
         </div>
         {% endfor %}
     </div>
