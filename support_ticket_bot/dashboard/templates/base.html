@@ -9,7 +9,7 @@
         * { box-sizing: border-box; }
         body { font-family: Arial, sans-serif; margin: 0; background: #111827; color: #f3f4f6; }
         a { color: #93c5fd; text-decoration: none; }
-        .topbar { display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:#1f2937; }
+        .topbar { position:sticky; top:0; z-index:1000; display:flex; justify-content:space-between; align-items:center; padding:16px 24px; background:rgba(31, 41, 55, 0.96); border-bottom:1px solid #374151; backdrop-filter:blur(10px); }
         .topbar-left { display:flex; align-items:center; gap:24px; }
         .topnav { display:flex; gap:16px; }
         .topnav a { color:#dbeafe; }
