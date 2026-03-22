@@ -440,10 +440,11 @@ class TicketsCog(commands.Cog):
             log.warning("Failed to defer ticket creation interaction for user_id=%s", interaction.user.id)
 
         seed_message = await target_channel.send(f"New ticket request from {interaction.user.mention} for **{chosen_label}**")
-        thread_name = (
+        thread_name_prefix = (
             f"{settings.thread_name_prefix}-{clean_slug(chosen_label, 30)}-"
-            f"{clean_slug(interaction.user.name, 30)}-{interaction.user.id}"
-        )[:100]
+            f"{clean_slug(interaction.user.name, 30)}"
+        )
+        thread_name = thread_name_prefix[:100]
 
         try:
             thread = await seed_message.create_thread(
@@ -459,6 +460,13 @@ class TicketsCog(commands.Cog):
             await self._delete_message_quietly(seed_message, context="thread creation cleanup")
             await self._reply(interaction, f"Failed to create ticket thread: {exc}")
             return
+
+        final_thread_name = f"{thread_name_prefix}-{thread.id}"[:100]
+        if thread.name != final_thread_name:
+            try:
+                await thread.edit(name=final_thread_name, reason="Use ticket ID in thread name")
+            except discord.HTTPException:
+                log.warning("Failed to rename ticket thread thread_id=%s final_name=%s", thread.id, final_thread_name)
 
         try:
             await thread.add_user(interaction.user)
