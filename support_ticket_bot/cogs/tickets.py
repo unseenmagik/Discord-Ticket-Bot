@@ -33,6 +33,7 @@ class TicketsCog(commands.Cog):
         self.cleanup_closed_threads.start()
         self.dispatch_dashboard_thread_notices.start()
         self.sync_dashboard_thread_members.start()
+        self.sync_dashboard_access_directory.start()
 
     async def cog_load(self) -> None:
         await self.register_persistent_views()
@@ -41,6 +42,7 @@ class TicketsCog(commands.Cog):
         self.cleanup_closed_threads.cancel()
         self.dispatch_dashboard_thread_notices.cancel()
         self.sync_dashboard_thread_members.cancel()
+        self.sync_dashboard_access_directory.cancel()
 
     async def register_persistent_views(self) -> None:
         self.bot.add_view(TicketPanelView(self.bot))
@@ -298,6 +300,59 @@ class TicketsCog(commands.Cog):
             return await guild.fetch_member(user_id)
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
             return None
+
+    async def _sync_dashboard_access_directory_once(self) -> None:
+        guild = self.bot.get_guild(self.bot.settings.guild_id)
+        if guild is None:
+            log.warning(
+                "Skipping dashboard access directory sync because configured guild_id=%s is not available to the bot.",
+                self.bot.settings.guild_id,
+            )
+            return
+
+        configured_role_ids = sorted(
+            set(self.bot.settings.dashboard_role_channel_access.keys()) | set(self.bot.settings.dashboard_role_full_access_ids)
+        )
+        role_map = {
+            role_id: role.name
+            for role_id in configured_role_ids
+            if (role := guild.get_role(role_id)) is not None
+        }
+        if configured_role_ids:
+            missing_role_ids = [role_id for role_id in configured_role_ids if role_id not in role_map]
+            if missing_role_ids:
+                log.warning(
+                    "Dashboard access directory sync could not resolve these configured roles in guild_id=%s: %s",
+                    guild.id,
+                    missing_role_ids,
+                )
+            await self.bot.db.sync_guild_role_directory(
+                guild_id=guild.id,
+                target_role_ids=configured_role_ids,
+                role_map=role_map,
+                synced_at=utc_now_iso(),
+            )
+
+        configured_user_ids = sorted(self.bot.settings.dashboard_admin_user_ids)
+        if configured_user_ids:
+            member_map: dict[int, str] = {}
+            for user_id in configured_user_ids:
+                member = await self._resolve_guild_member(guild, user_id)
+                if member is not None:
+                    member_map[user_id] = member.display_name
+            missing_user_ids = [user_id for user_id in configured_user_ids if user_id not in member_map]
+            if missing_user_ids:
+                log.warning(
+                    "Dashboard access directory sync could not resolve these configured admin users in guild_id=%s: %s",
+                    guild.id,
+                    missing_user_ids,
+                )
+            await self.bot.db.sync_guild_member_directory(
+                guild_id=guild.id,
+                target_user_ids=configured_user_ids,
+                member_map=member_map,
+                synced_at=utc_now_iso(),
+            )
 
     def _thread_link(self, thread: discord.Thread) -> str:
         jump_url = getattr(thread, "jump_url", None)
@@ -1126,6 +1181,10 @@ class TicketsCog(commands.Cog):
                 )
             await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
 
+    @tasks.loop(minutes=15)
+    async def sync_dashboard_access_directory(self) -> None:
+        await self._sync_dashboard_access_directory_once()
+
     @cleanup_closed_threads.before_loop
     async def before_cleanup(self) -> None:
         await self.bot.wait_until_ready()
@@ -1136,6 +1195,10 @@ class TicketsCog(commands.Cog):
 
     @sync_dashboard_thread_members.before_loop
     async def before_sync_dashboard_thread_members(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @sync_dashboard_access_directory.before_loop
+    async def before_sync_dashboard_access_directory(self) -> None:
         await self.bot.wait_until_ready()
 
     @app_commands.command(name="setup_tickets", description="Post the ticket panel")

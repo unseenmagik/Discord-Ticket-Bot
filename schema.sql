@@ -100,3 +100,21 @@ CREATE TABLE IF NOT EXISTS ticket_thread_member_sync (
     INDEX idx_ticket_thread_member_sync_processed_created (processed_at, created_at),
     INDEX idx_ticket_thread_member_sync_thread (thread_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS guild_member_directory (
+    guild_id BIGINT NOT NULL,
+    discord_user_id BIGINT NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    PRIMARY KEY (guild_id, discord_user_id),
+    INDEX idx_guild_member_directory_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS guild_role_directory (
+    guild_id BIGINT NOT NULL,
+    role_id BIGINT NOT NULL,
+    role_name VARCHAR(255) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    PRIMARY KEY (guild_id, role_id),
+    INDEX idx_guild_role_directory_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

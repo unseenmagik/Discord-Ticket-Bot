@@ -25,8 +25,6 @@ from support_ticket_bot.dashboard.auth import (
     create_state_value,
     discord_oauth_configured,
     exchange_code_for_token,
-    fetch_guild_role_map,
-    fetch_member_display_map,
     fetch_discord_member_roles,
     fetch_discord_user,
     load_viewer_from_cookie,
@@ -185,23 +183,17 @@ def _build_role_access_summary(settings: BotSettings, role_name_map: dict[int, s
     return rows
 
 
-async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object]]:
+async def _build_admin_user_rows(db: DashboardDatabase, settings: BotSettings) -> list[dict[str, object]]:
     if not settings.dashboard_admin_user_ids:
         return []
-    try:
-        name_map = await fetch_member_display_map(settings.token, settings.guild_id, settings.dashboard_admin_user_ids)
-    except DiscordOAuthError as exc:
-        log.warning(
-            "Dashboard access summary could not resolve admin user names for guild_id=%s user_ids=%s: %s",
-            settings.guild_id,
-            settings.dashboard_admin_user_ids,
-            exc,
-        )
-        name_map = {}
+    name_map = db.get_cached_member_display_map(
+        guild_id=settings.guild_id,
+        user_ids=settings.dashboard_admin_user_ids,
+    )
     missing_user_ids = sorted(user_id for user_id in settings.dashboard_admin_user_ids if user_id not in name_map)
     if missing_user_ids:
         log.warning(
-            "Dashboard access summary could not resolve these admin users in guild_id=%s: %s",
+            "Dashboard access summary is missing cached admin user names for guild_id=%s: %s",
             settings.guild_id,
             missing_user_ids,
         )
@@ -214,28 +206,23 @@ async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object
     ]
 
 
-async def _build_access_summary_context(settings: BotSettings) -> dict[str, object]:
-    try:
-        role_name_map = await fetch_guild_role_map(settings.token, settings.guild_id)
-    except DiscordOAuthError as exc:
-        log.warning(
-            "Dashboard access summary could not resolve role names for guild_id=%s: %s",
-            settings.guild_id,
-            exc,
-        )
-        role_name_map = {}
+async def _build_access_summary_context(db: DashboardDatabase, settings: BotSettings) -> dict[str, object]:
     configured_role_ids = sorted(
         set(settings.dashboard_role_channel_access.keys()) | set(settings.dashboard_role_full_access_ids)
+    )
+    role_name_map = db.get_cached_role_name_map(
+        guild_id=settings.guild_id,
+        role_ids=configured_role_ids,
     )
     missing_role_ids = [role_id for role_id in configured_role_ids if role_id not in role_name_map]
     if missing_role_ids:
         log.warning(
-            "Dashboard access summary could not resolve these configured roles in guild_id=%s: %s",
+            "Dashboard access summary is missing cached role names for guild_id=%s: %s",
             settings.guild_id,
             missing_role_ids,
         )
     return {
-        "admin_user_rows": await _build_admin_user_rows(settings),
+        "admin_user_rows": await _build_admin_user_rows(db, settings),
         "role_access_rows": _build_role_access_summary(settings, role_name_map),
     }
 
@@ -338,6 +325,7 @@ async def lifespan(app: FastAPI):
     app.state.db.ensure_tag_tables()
     app.state.db.ensure_thread_notice_queue_table()
     app.state.db.ensure_thread_member_sync_queue_table()
+    app.state.db.ensure_guild_directory_tables()
     app.state.db.ensure_ticket_schema_updates()
     yield
 
@@ -545,7 +533,7 @@ def create_app() -> FastAPI:
         total_audit_pages = max(1, (total_audit_events + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE)
         audit_page = min(max(audit_page, 1), total_audit_pages)
         audit_events = db.list_audit_events(limit=AUDIT_PAGE_SIZE, offset=(audit_page - 1) * AUDIT_PAGE_SIZE)
-        access_context = await _build_access_summary_context(settings)
+        access_context = await _build_access_summary_context(db, settings)
         return TEMPLATES.TemplateResponse(
             "admin.html",
             _template_context(
