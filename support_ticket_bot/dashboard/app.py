@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
+import logging
 from pathlib import Path
 from urllib.parse import quote_plus, urlencode
 
@@ -49,6 +50,7 @@ STATS_RANGE_LABELS = {
     "custom": "Custom range",
 }
 AUDIT_PAGE_SIZE = 5
+log = logging.getLogger(__name__)
 
 
 def _template_context(request: Request, viewer: DashboardViewer | None, **extra: object) -> dict[str, object]:
@@ -188,8 +190,21 @@ async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object
         return []
     try:
         name_map = await fetch_member_display_map(settings.token, settings.guild_id, settings.dashboard_admin_user_ids)
-    except DiscordOAuthError:
+    except DiscordOAuthError as exc:
+        log.warning(
+            "Dashboard access summary could not resolve admin user names for guild_id=%s user_ids=%s: %s",
+            settings.guild_id,
+            settings.dashboard_admin_user_ids,
+            exc,
+        )
         name_map = {}
+    missing_user_ids = sorted(user_id for user_id in settings.dashboard_admin_user_ids if user_id not in name_map)
+    if missing_user_ids:
+        log.warning(
+            "Dashboard access summary could not resolve these admin users in guild_id=%s: %s",
+            settings.guild_id,
+            missing_user_ids,
+        )
     return [
         {
             "user_id": user_id,
@@ -202,8 +217,23 @@ async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object
 async def _build_access_summary_context(settings: BotSettings) -> dict[str, object]:
     try:
         role_name_map = await fetch_guild_role_map(settings.token, settings.guild_id)
-    except DiscordOAuthError:
+    except DiscordOAuthError as exc:
+        log.warning(
+            "Dashboard access summary could not resolve role names for guild_id=%s: %s",
+            settings.guild_id,
+            exc,
+        )
         role_name_map = {}
+    configured_role_ids = sorted(
+        set(settings.dashboard_role_channel_access.keys()) | set(settings.dashboard_role_full_access_ids)
+    )
+    missing_role_ids = [role_id for role_id in configured_role_ids if role_id not in role_name_map]
+    if missing_role_ids:
+        log.warning(
+            "Dashboard access summary could not resolve these configured roles in guild_id=%s: %s",
+            settings.guild_id,
+            missing_role_ids,
+        )
     return {
         "admin_user_rows": await _build_admin_user_rows(settings),
         "role_access_rows": _build_role_access_summary(settings, role_name_map),
