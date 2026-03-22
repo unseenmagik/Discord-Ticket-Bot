@@ -108,6 +108,25 @@ def _ticket_detail_url(thread_id: int, *, notice: str | None = None, error: str 
     return f"/tickets/{thread_id}" + (f"?{urlencode(query)}" if query else "")
 
 
+def _admin_url(
+    *,
+    saved: int | None = None,
+    notice: str | None = None,
+    error: str | None = None,
+    audit_page: int | None = None,
+) -> str:
+    query: dict[str, str] = {}
+    if saved:
+        query["saved"] = str(saved)
+    if notice:
+        query["notice"] = notice
+    if error:
+        query["error"] = error
+    if audit_page and audit_page > 1:
+        query["audit_page"] = str(audit_page)
+    return "/admin" + (f"?{urlencode(query)}" if query else "")
+
+
 def _queue_label_map(settings: BotSettings) -> dict[int, str]:
     return {channel_id: label for label, channel_id in settings.server_targets.items()}
 
@@ -268,6 +287,7 @@ async def lifespan(app: FastAPI):
     app.state.db.ensure_app_settings_table()
     app.state.db.ensure_dashboard_audit_table()
     app.state.db.ensure_internal_notes_table()
+    app.state.db.ensure_tag_tables()
     app.state.db.ensure_ticket_schema_updates()
     yield
 
@@ -429,12 +449,15 @@ def create_app() -> FastAPI:
     async def admin_page(
         request: Request,
         saved: int = 0,
+        notice: str | None = None,
+        error: str | None = None,
         audit_page: int = 1,
         viewer: DashboardViewer = Depends(require_admin),
     ):
         db: DashboardDatabase = request.app.state.db
         settings: BotSettings = request.app.state.settings
         templates = db.get_message_templates()
+        tag_definitions = db.list_tag_definitions()
         total_audit_events = db.count_audit_events()
         total_audit_pages = max(1, (total_audit_events + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE)
         audit_page = min(max(audit_page, 1), total_audit_pages)
@@ -447,8 +470,11 @@ def create_app() -> FastAPI:
                 viewer,
                 templates=templates,
                 saved=bool(saved),
+                notice=notice,
+                error=error,
                 admin_user_rows=access_context["admin_user_rows"],
                 role_access_rows=access_context["role_access_rows"],
+                tag_definitions=tag_definitions,
                 audit_events=audit_events,
                 audit_page=audit_page,
                 audit_total_pages=total_audit_pages,
@@ -480,6 +506,58 @@ def create_app() -> FastAPI:
         db.set_message_templates(values)
         return RedirectResponse(url="/admin?saved=1", status_code=303)
 
+    @app.post("/admin/tags")
+    async def create_admin_tag(
+        request: Request,
+        tag_name: str = Form(...),
+        viewer: DashboardViewer = Depends(require_admin),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        cleaned_name = " ".join(tag_name.strip().split())
+        if not cleaned_name:
+            return RedirectResponse(url=_admin_url(error="Tag name cannot be empty."), status_code=303)
+
+        existing = db.get_tag_definition_by_name(cleaned_name)
+        if existing is not None:
+            return RedirectResponse(
+                url=_admin_url(error=f'Tag "{existing["tag_name"]}" already exists.'),
+                status_code=303,
+            )
+
+        created = db.create_tag_definition(
+            tag_name=cleaned_name,
+            created_by_discord_user_id=viewer.discord_user_id,
+            created_by_display_name=viewer.display_name,
+            created_at=utc_now_iso(),
+        )
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="tag_created",
+            metadata={"tag_id": created["id"], "tag_name": created["tag_name"]},
+        )
+        return RedirectResponse(url=_admin_url(notice=f'Tag "{created["tag_name"]}" created.'), status_code=303)
+
+    @app.post("/admin/tags/{tag_id}/delete")
+    async def delete_admin_tag(
+        tag_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_admin),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        tag = next((item for item in db.list_tag_definitions() if item["id"] == tag_id), None)
+        if tag is None:
+            return RedirectResponse(url=_admin_url(error="Tag not found."), status_code=303)
+
+        db.delete_tag_definition(tag_id)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="tag_deleted",
+            metadata={"tag_id": tag_id, "tag_name": tag["tag_name"]},
+        )
+        return RedirectResponse(url=_admin_url(notice=f'Tag "{tag["tag_name"]}" deleted.'), status_code=303)
+
     @app.get("/tickets/{thread_id}", response_class=HTMLResponse)
     async def ticket_detail(
         thread_id: int,
@@ -498,6 +576,8 @@ def create_app() -> FastAPI:
         )
         can_manage_ticket = _viewer_can_manage_ticket(viewer, ticket)
         internal_notes = db.list_ticket_notes(thread_id) if can_manage_ticket else []
+        available_tags = db.list_tag_definitions()
+        current_tag_ids = {tag["id"] for tag in ticket.get("tags", [])}
         return TEMPLATES.TemplateResponse(
             "ticket_detail.html",
             _template_context(
@@ -507,6 +587,8 @@ def create_app() -> FastAPI:
                 transcript_url=transcript_url,
                 can_manage_ticket=can_manage_ticket,
                 internal_notes=internal_notes,
+                available_tags=available_tags,
+                current_tag_ids=current_tag_ids,
                 notice=notice,
                 error=error,
             ),
@@ -629,6 +711,89 @@ def create_app() -> FastAPI:
         )
         return RedirectResponse(
             url=_ticket_detail_url(thread_id, notice="Internal note added."),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/tags")
+    async def add_ticket_tag(
+        thread_id: int,
+        request: Request,
+        tag_id: int = Form(...),
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to update ticket tags.")
+        if ticket.get("status") != "open":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Only open tickets can be updated."),
+                status_code=303,
+            )
+
+        tag = next((item for item in db.list_tag_definitions() if item["id"] == tag_id), None)
+        if tag is None:
+            return RedirectResponse(url=_ticket_detail_url(thread_id, error="Tag not found."), status_code=303)
+        if any(existing["id"] == tag_id for existing in ticket.get("tags", [])):
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, notice=f'Tag "{tag["tag_name"]}" was already applied.'),
+                status_code=303,
+            )
+
+        db.add_ticket_tag(
+            thread_id=thread_id,
+            tag_id=tag_id,
+            assigned_at=utc_now_iso(),
+            assigned_by_discord_user_id=viewer.discord_user_id,
+            assigned_by_display_name=viewer.display_name,
+        )
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_tag_added",
+            ticket_thread_id=thread_id,
+            metadata={"tag_id": tag_id, "tag_name": tag["tag_name"], "source": "dashboard"},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice=f'Tag "{tag["tag_name"]}" added.'),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/tags/{tag_id}/remove")
+    async def remove_ticket_tag(
+        thread_id: int,
+        tag_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to update ticket tags.")
+        if ticket.get("status") != "open":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Only open tickets can be updated."),
+                status_code=303,
+            )
+
+        existing_tag = next((tag for tag in ticket.get("tags", []) if tag["id"] == tag_id), None)
+        if existing_tag is None:
+            return RedirectResponse(url=_ticket_detail_url(thread_id, notice="Tag was already removed."), status_code=303)
+
+        db.remove_ticket_tag(thread_id=thread_id, tag_id=tag_id)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_tag_removed",
+            ticket_thread_id=thread_id,
+            metadata={"tag_id": tag_id, "tag_name": existing_tag["tag_name"], "source": "dashboard"},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice=f'Tag "{existing_tag["tag_name"]}" removed.'),
             status_code=303,
         )
 

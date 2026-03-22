@@ -46,6 +46,30 @@ CREATE TABLE IF NOT EXISTS ticket_internal_notes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 INTERNAL_NOTES_TABLE_NAME = "ticket_internal_notes"
+TAG_DEFINITIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS ticket_tags (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    tag_key VARCHAR(100) NOT NULL UNIQUE,
+    tag_name VARCHAR(100) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    created_by_discord_user_id BIGINT NULL,
+    created_by_display_name VARCHAR(255) NULL,
+    INDEX idx_ticket_tags_name (tag_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+TAG_DEFINITIONS_TABLE_NAME = "ticket_tags"
+TAG_ASSIGNMENTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS ticket_tag_assignments (
+    ticket_thread_id BIGINT NOT NULL,
+    tag_id BIGINT NOT NULL,
+    assigned_at VARCHAR(64) NOT NULL,
+    assigned_by_discord_user_id BIGINT NULL,
+    assigned_by_display_name VARCHAR(255) NULL,
+    PRIMARY KEY (ticket_thread_id, tag_id),
+    INDEX idx_ticket_tag_assignments_tag_id (tag_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+TAG_ASSIGNMENTS_TABLE_NAME = "ticket_tag_assignments"
 TICKET_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
     ("assignee_discord_user_id", "ALTER TABLE tickets ADD COLUMN assignee_discord_user_id BIGINT NULL"),
     ("assignee_display_name", "ALTER TABLE tickets ADD COLUMN assignee_display_name VARCHAR(255) NULL"),
@@ -59,6 +83,14 @@ TICKET_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
         "ALTER TABLE tickets ADD COLUMN assigned_by_display_name VARCHAR(255) NULL",
     ),
 )
+
+
+def _clean_tag_name(value: str) -> str:
+    return " ".join(str(value).strip().split())
+
+
+def _tag_key(value: str) -> str:
+    return _clean_tag_name(value).casefold()
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -181,6 +213,10 @@ class TicketDatabase:
             await self.execute(AUDIT_LOG_TABLE_SQL)
         if not await self._table_exists(INTERNAL_NOTES_TABLE_NAME):
             await self.execute(INTERNAL_NOTES_TABLE_SQL)
+        if not await self._table_exists(TAG_DEFINITIONS_TABLE_NAME):
+            await self.execute(TAG_DEFINITIONS_TABLE_SQL)
+        if not await self._table_exists(TAG_ASSIGNMENTS_TABLE_NAME):
+            await self.execute(TAG_ASSIGNMENTS_TABLE_SQL)
         await self._ensure_ticket_schema_updates()
 
     async def close(self) -> None:
@@ -427,6 +463,89 @@ class TicketDatabase:
             ),
         )
 
+    async def list_tag_definitions(self) -> list[dict[str, Any]]:
+        return await self.fetchall("SELECT * FROM ticket_tags ORDER BY tag_name ASC, id ASC")
+
+    async def get_tag_definition_by_name(self, tag_name: str) -> dict[str, Any] | None:
+        key = _tag_key(tag_name)
+        if not key:
+            return None
+        return await self.fetchone("SELECT * FROM ticket_tags WHERE tag_key = %s LIMIT 1", (key,))
+
+    async def create_tag_definition(
+        self,
+        *,
+        tag_name: str,
+        created_by_discord_user_id: int | None,
+        created_by_display_name: str | None,
+        created_at: str,
+    ) -> dict[str, Any]:
+        clean_name = _clean_tag_name(tag_name)
+        key = _tag_key(clean_name)
+        await self.execute(
+            """
+            INSERT INTO ticket_tags (
+                tag_key,
+                tag_name,
+                created_at,
+                created_by_discord_user_id,
+                created_by_display_name
+            ) VALUES (%s, %s, %s, %s, %s)
+            """,
+            (key, clean_name, created_at, created_by_discord_user_id, created_by_display_name),
+        )
+        created = await self.get_tag_definition_by_name(clean_name)
+        assert created is not None
+        return created
+
+    async def delete_tag_definition(self, tag_id: int) -> None:
+        await self.execute("DELETE FROM ticket_tag_assignments WHERE tag_id = %s", (tag_id,))
+        await self.execute("DELETE FROM ticket_tags WHERE id = %s", (tag_id,))
+
+    async def list_ticket_tags(self, thread_id: int) -> list[dict[str, Any]]:
+        return await self.fetchall(
+            """
+            SELECT tt.*, tta.assigned_at, tta.assigned_by_discord_user_id, tta.assigned_by_display_name
+            FROM ticket_tag_assignments AS tta
+            INNER JOIN ticket_tags AS tt ON tt.id = tta.tag_id
+            WHERE tta.ticket_thread_id = %s
+            ORDER BY tt.tag_name ASC, tt.id ASC
+            """,
+            (thread_id,),
+        )
+
+    async def add_ticket_tag(
+        self,
+        *,
+        thread_id: int,
+        tag_id: int,
+        assigned_at: str,
+        assigned_by_discord_user_id: int | None,
+        assigned_by_display_name: str | None,
+    ) -> None:
+        await self.execute(
+            """
+            INSERT INTO ticket_tag_assignments (
+                ticket_thread_id,
+                tag_id,
+                assigned_at,
+                assigned_by_discord_user_id,
+                assigned_by_display_name
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                assigned_at = VALUES(assigned_at),
+                assigned_by_discord_user_id = VALUES(assigned_by_discord_user_id),
+                assigned_by_display_name = VALUES(assigned_by_display_name)
+            """,
+            (thread_id, tag_id, assigned_at, assigned_by_discord_user_id, assigned_by_display_name),
+        )
+
+    async def remove_ticket_tag(self, *, thread_id: int, tag_id: int) -> None:
+        await self.execute(
+            "DELETE FROM ticket_tag_assignments WHERE ticket_thread_id = %s AND tag_id = %s",
+            (thread_id, tag_id),
+        )
+
     async def list_open_tickets(self) -> list[dict[str, Any]]:
         return await self.fetchall("SELECT * FROM tickets WHERE status = 'open'")
 
@@ -496,6 +615,14 @@ class DashboardDatabase:
             with conn.cursor() as cur:
                 cur.execute(INTERNAL_NOTES_TABLE_SQL)
 
+    def ensure_tag_tables(self) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                if not self._table_exists(TAG_DEFINITIONS_TABLE_NAME):
+                    cur.execute(TAG_DEFINITIONS_TABLE_SQL)
+                if not self._table_exists(TAG_ASSIGNMENTS_TABLE_NAME):
+                    cur.execute(TAG_ASSIGNMENTS_TABLE_SQL)
+
     def _table_exists(self, table_name: str) -> bool:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -564,6 +691,47 @@ class DashboardDatabase:
             return " WHERE 1 = 0", []
         return " WHERE (" + " OR ".join(filters) + ")", params
 
+    def _attach_ticket_tags(self, tickets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not tickets:
+            return tickets
+
+        self.ensure_tag_tables()
+        thread_ids = [ticket["thread_id"] for ticket in tickets if ticket.get("thread_id") is not None]
+        if not thread_ids:
+            for ticket in tickets:
+                ticket["tags"] = []
+            return tickets
+
+        placeholders = ", ".join(["%s"] * len(thread_ids))
+        tag_rows: list[dict[str, Any]]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT
+                        tta.ticket_thread_id,
+                        tt.id,
+                        tt.tag_name,
+                        tt.tag_key,
+                        tta.assigned_at,
+                        tta.assigned_by_discord_user_id,
+                        tta.assigned_by_display_name
+                    FROM ticket_tag_assignments AS tta
+                    INNER JOIN ticket_tags AS tt ON tt.id = tta.tag_id
+                    WHERE tta.ticket_thread_id IN ({placeholders})
+                    ORDER BY tt.tag_name ASC, tt.id ASC
+                    """,
+                    tuple(thread_ids),
+                )
+                tag_rows = list(cur.fetchall())
+
+        tags_by_ticket: dict[int, list[dict[str, Any]]] = {}
+        for row in tag_rows:
+            tags_by_ticket.setdefault(row["ticket_thread_id"], []).append(row)
+        for ticket in tickets:
+            ticket["tags"] = tags_by_ticket.get(ticket["thread_id"], [])
+        return tickets
+
     def get_stats(
         self,
         *,
@@ -629,7 +797,8 @@ class DashboardDatabase:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(query, tuple(params))
-                return list(cur.fetchall())
+                rows = list(cur.fetchall())
+        return self._attach_ticket_tags(rows)
 
     def get_ticket(
         self,
@@ -652,7 +821,11 @@ class DashboardDatabase:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(query, tuple(params))
-                return cur.fetchone()
+                row = cur.fetchone()
+        if row is None:
+            return None
+        self._attach_ticket_tags([row])
+        return row
 
     def get_message_templates(self) -> dict[str, str]:
         templates = DEFAULT_MESSAGE_TEMPLATES.copy()
@@ -774,6 +947,113 @@ class DashboardDatabase:
                         note_text,
                         created_at,
                     ),
+                )
+
+    def list_tag_definitions(self) -> list[dict[str, Any]]:
+        self.ensure_tag_tables()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM ticket_tags ORDER BY tag_name ASC, id ASC")
+                return list(cur.fetchall())
+
+    def get_tag_definition_by_name(self, tag_name: str) -> dict[str, Any] | None:
+        self.ensure_tag_tables()
+        key = _tag_key(tag_name)
+        if not key:
+            return None
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM ticket_tags WHERE tag_key = %s LIMIT 1", (key,))
+                return cur.fetchone()
+
+    def create_tag_definition(
+        self,
+        *,
+        tag_name: str,
+        created_by_discord_user_id: int | None,
+        created_by_display_name: str | None,
+        created_at: str,
+    ) -> dict[str, Any]:
+        self.ensure_tag_tables()
+        clean_name = _clean_tag_name(tag_name)
+        key = _tag_key(clean_name)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ticket_tags (
+                        tag_key,
+                        tag_name,
+                        created_at,
+                        created_by_discord_user_id,
+                        created_by_display_name
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (key, clean_name, created_at, created_by_discord_user_id, created_by_display_name),
+                )
+        created = self.get_tag_definition_by_name(clean_name)
+        assert created is not None
+        return created
+
+    def delete_tag_definition(self, tag_id: int) -> None:
+        self.ensure_tag_tables()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM ticket_tag_assignments WHERE tag_id = %s", (tag_id,))
+                cur.execute("DELETE FROM ticket_tags WHERE id = %s", (tag_id,))
+
+    def list_ticket_tags(self, thread_id: int) -> list[dict[str, Any]]:
+        self.ensure_tag_tables()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT tt.*, tta.assigned_at, tta.assigned_by_discord_user_id, tta.assigned_by_display_name
+                    FROM ticket_tag_assignments AS tta
+                    INNER JOIN ticket_tags AS tt ON tt.id = tta.tag_id
+                    WHERE tta.ticket_thread_id = %s
+                    ORDER BY tt.tag_name ASC, tt.id ASC
+                    """,
+                    (thread_id,),
+                )
+                return list(cur.fetchall())
+
+    def add_ticket_tag(
+        self,
+        *,
+        thread_id: int,
+        tag_id: int,
+        assigned_at: str,
+        assigned_by_discord_user_id: int | None,
+        assigned_by_display_name: str | None,
+    ) -> None:
+        self.ensure_tag_tables()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ticket_tag_assignments (
+                        ticket_thread_id,
+                        tag_id,
+                        assigned_at,
+                        assigned_by_discord_user_id,
+                        assigned_by_display_name
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        assigned_at = VALUES(assigned_at),
+                        assigned_by_discord_user_id = VALUES(assigned_by_discord_user_id),
+                        assigned_by_display_name = VALUES(assigned_by_display_name)
+                    """,
+                    (thread_id, tag_id, assigned_at, assigned_by_discord_user_id, assigned_by_display_name),
+                )
+
+    def remove_ticket_tag(self, *, thread_id: int, tag_id: int) -> None:
+        self.ensure_tag_tables()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM ticket_tag_assignments WHERE ticket_thread_id = %s AND tag_id = %s",
+                    (thread_id, tag_id),
                 )
 
     def add_audit_event(

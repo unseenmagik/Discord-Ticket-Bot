@@ -361,6 +361,72 @@ class TicketsCog(commands.Cog):
         )
         return True, f"Assigned {thread.mention} to {assignee.mention}."
 
+    async def _add_tag_to_ticket(
+        self,
+        *,
+        thread: discord.Thread,
+        ticket: dict,
+        tag: dict[str, Any],
+        actor: discord.abc.User,
+        source: str,
+    ) -> tuple[bool, str]:
+        if ticket["status"] != "open":
+            return False, "Only open tickets can be updated."
+
+        existing_tags = await self.bot.db.list_ticket_tags(thread.id)
+        if any(existing["id"] == tag["id"] for existing in existing_tags):
+            return False, f'Tag "{tag["tag_name"]}" is already applied to this ticket.'
+
+        await self.bot.db.add_ticket_tag(
+            thread_id=thread.id,
+            tag_id=tag["id"],
+            assigned_at=utc_now_iso(),
+            assigned_by_discord_user_id=actor.id,
+            assigned_by_display_name=getattr(actor, "display_name", str(actor)),
+        )
+        try:
+            await thread.send(f'Tag `{tag["tag_name"]}` was added to this ticket by {getattr(actor, "mention", str(actor))}.')
+        except discord.HTTPException:
+            pass
+        await self._record_audit_event(
+            event_type="ticket_tag_added",
+            actor=actor,
+            ticket_thread_id=thread.id,
+            metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": source},
+        )
+        return True, f'Added tag "{tag["tag_name"]}" to {thread.mention}.'
+
+    async def _remove_tag_from_ticket(
+        self,
+        *,
+        thread: discord.Thread,
+        ticket: dict,
+        tag: dict[str, Any],
+        actor: discord.abc.User,
+        source: str,
+    ) -> tuple[bool, str]:
+        if ticket["status"] != "open":
+            return False, "Only open tickets can be updated."
+
+        existing_tags = await self.bot.db.list_ticket_tags(thread.id)
+        if not any(existing["id"] == tag["id"] for existing in existing_tags):
+            return False, f'Tag "{tag["tag_name"]}" is not applied to this ticket.'
+
+        await self.bot.db.remove_ticket_tag(thread_id=thread.id, tag_id=tag["id"])
+        try:
+            await thread.send(
+                f'Tag `{tag["tag_name"]}` was removed from this ticket by {getattr(actor, "mention", str(actor))}.'
+            )
+        except discord.HTTPException:
+            pass
+        await self._record_audit_event(
+            event_type="ticket_tag_removed",
+            actor=actor,
+            ticket_thread_id=thread.id,
+            metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": source},
+        )
+        return True, f'Removed tag "{tag["tag_name"]}" from {thread.mention}.'
+
     def _member_has_staff_ticket_access(
         self,
         member: discord.Member,
@@ -813,6 +879,8 @@ class TicketsCog(commands.Cog):
         if ticket is None:
             await self._reply(interaction, "This thread is not tracked as a ticket.")
             return
+        ticket_tags = await self.bot.db.list_ticket_tags(interaction.channel.id)
+        tags_text = ", ".join(tag["tag_name"] for tag in ticket_tags) if ticket_tags else "None"
         embed = self._embed(
             "Ticket Info",
             (
@@ -820,12 +888,65 @@ class TicketsCog(commands.Cog):
                 f"**Status:** {ticket['status']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
                 f"**Server:** {ticket['server_label']}\n"
+                f"**Tags:** {tags_text}\n"
                 f"**Assignee:** {ticket.get('assignee_display_name') or 'Unassigned'}\n"
                 f"**Created:** {ticket['created_at']}\n"
                 f"**Closed:** {ticket.get('closed_at') or 'N/A'}"
             ),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="list_tags", description="List all managed ticket tags")
+    async def list_tags(self, interaction: discord.Interaction) -> None:
+        tags = await self.bot.db.list_tag_definitions()
+        if not tags:
+            await self._reply(interaction, "No managed tags have been created yet.")
+            return
+        embed = self._embed(
+            "Managed Tags",
+            "\n".join(f"- `{tag['tag_name']}`" for tag in tags),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="create_tag", description="Create a managed ticket tag")
+    @app_commands.default_permissions(administrator=True)
+    async def create_tag(self, interaction: discord.Interaction, name: str) -> None:
+        cleaned_name = " ".join(name.strip().split())
+        if not cleaned_name:
+            await self._reply(interaction, "Tag name cannot be empty.")
+            return
+        existing = await self.bot.db.get_tag_definition_by_name(cleaned_name)
+        if existing is not None:
+            await self._reply(interaction, f'Tag "{existing["tag_name"]}" already exists.')
+            return
+
+        created = await self.bot.db.create_tag_definition(
+            tag_name=cleaned_name,
+            created_by_discord_user_id=interaction.user.id,
+            created_by_display_name=getattr(interaction.user, "display_name", str(interaction.user)),
+            created_at=utc_now_iso(),
+        )
+        await self._record_audit_event(
+            event_type="tag_created",
+            actor=interaction.user,
+            metadata={"tag_id": created["id"], "tag_name": created["tag_name"], "source": "discord_slash_command"},
+        )
+        await self._reply(interaction, f'Created tag "{created["tag_name"]}".')
+
+    @app_commands.command(name="delete_tag", description="Delete a managed ticket tag")
+    @app_commands.default_permissions(administrator=True)
+    async def delete_tag(self, interaction: discord.Interaction, name: str) -> None:
+        tag = await self.bot.db.get_tag_definition_by_name(name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+        await self.bot.db.delete_tag_definition(tag["id"])
+        await self._record_audit_event(
+            event_type="tag_deleted",
+            actor=interaction.user,
+            metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": "discord_slash_command"},
+        )
+        await self._reply(interaction, f'Deleted tag "{tag["tag_name"]}".')
 
     @app_commands.command(name="assign_ticket", description="Assign the current ticket to yourself or another user")
     async def assign_ticket(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
@@ -851,6 +972,64 @@ class TicketsCog(commands.Cog):
             ticket=ticket,
             assignee=assignee,
             actor=interaction.user,
+        )
+        await self._reply(interaction, message)
+
+    @app_commands.command(name="add_ticket_tag", description="Add a managed tag to the current ticket")
+    async def add_ticket_tag(self, interaction: discord.Interaction, tag_name: str) -> None:
+        if not isinstance(interaction.channel, discord.Thread):
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
+            return
+
+        thread = interaction.channel
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
+            return
+        if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
+            await self._reply(interaction, "You do not have permission to update ticket tags.")
+            return
+
+        tag = await self.bot.db.get_tag_definition_by_name(tag_name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+
+        added, message = await self._add_tag_to_ticket(
+            thread=thread,
+            ticket=ticket,
+            tag=tag,
+            actor=interaction.user,
+            source="discord_slash_command",
+        )
+        await self._reply(interaction, message)
+
+    @app_commands.command(name="remove_ticket_tag", description="Remove a managed tag from the current ticket")
+    async def remove_ticket_tag(self, interaction: discord.Interaction, tag_name: str) -> None:
+        if not isinstance(interaction.channel, discord.Thread):
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
+            return
+
+        thread = interaction.channel
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
+            return
+        if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
+            await self._reply(interaction, "You do not have permission to update ticket tags.")
+            return
+
+        tag = await self.bot.db.get_tag_definition_by_name(tag_name)
+        if tag is None:
+            await self._reply(interaction, "Tag not found.")
+            return
+
+        removed, message = await self._remove_tag_from_ticket(
+            thread=thread,
+            ticket=ticket,
+            tag=tag,
+            actor=interaction.user,
+            source="discord_slash_command",
         )
         await self._reply(interaction, message)
 

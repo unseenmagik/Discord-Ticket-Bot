@@ -16,6 +16,7 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 - **FastAPI web dashboard** for stats and ticket browsing
 - **Ticket assignment** in the dashboard with assignee visibility on ticket views and transcript logs
 - **Internal staff notes** stored in the database and shown only to staff-capable dashboard viewers
+- **Managed ticket tags** that admins can define and staff can apply from Discord or the dashboard
 - **Auto-delete** for closed threads after a configurable delay
 - Modular structure with cogs, views, shared config, DB layer, and dashboard app
 
@@ -171,6 +172,11 @@ Ticket lifecycle events such as open, close, reopen, and delete are logged there
 - `/close_ticket`
 - `/reopen_ticket`
 - `/assign_ticket`
+- `/list_tags`
+- `/create_tag`
+- `/delete_tag`
+- `/add_ticket_tag`
+- `/remove_ticket_tag`
 - `/add_ticket_user`
 - `/ticket_info`
 
@@ -226,6 +232,12 @@ Staff-capable dashboard viewers can also:
 - assign open tickets to themselves from the ticket detail page
 - clear the current assignee from an open ticket
 - add internal notes that are only visible inside the dashboard
+- apply and remove managed tags from ticket detail pages
+
+Admins can manage the available tag list from:
+
+- the `Admin` page in the dashboard
+- `/create_tag`, `/delete_tag`, and `/list_tags` in Discord
 
 To access the WebUI:
 
