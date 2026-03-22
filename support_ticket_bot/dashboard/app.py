@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
+import logging
 from pathlib import Path
 from urllib.parse import quote_plus, urlencode
 
@@ -24,8 +25,6 @@ from support_ticket_bot.dashboard.auth import (
     create_state_value,
     discord_oauth_configured,
     exchange_code_for_token,
-    fetch_guild_role_map,
-    fetch_member_display_map,
     fetch_discord_member_roles,
     fetch_discord_user,
     load_viewer_from_cookie,
@@ -49,6 +48,7 @@ STATS_RANGE_LABELS = {
     "custom": "Custom range",
 }
 AUDIT_PAGE_SIZE = 5
+log = logging.getLogger(__name__)
 
 
 def _template_context(request: Request, viewer: DashboardViewer | None, **extra: object) -> dict[str, object]:
@@ -183,13 +183,20 @@ def _build_role_access_summary(settings: BotSettings, role_name_map: dict[int, s
     return rows
 
 
-async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object]]:
+async def _build_admin_user_rows(db: DashboardDatabase, settings: BotSettings) -> list[dict[str, object]]:
     if not settings.dashboard_admin_user_ids:
         return []
-    try:
-        name_map = await fetch_member_display_map(settings.token, settings.guild_id, settings.dashboard_admin_user_ids)
-    except DiscordOAuthError:
-        name_map = {}
+    name_map = db.get_cached_member_display_map(
+        guild_id=settings.guild_id,
+        user_ids=settings.dashboard_admin_user_ids,
+    )
+    missing_user_ids = sorted(user_id for user_id in settings.dashboard_admin_user_ids if user_id not in name_map)
+    if missing_user_ids:
+        log.warning(
+            "Dashboard access summary is missing cached admin user names for guild_id=%s: %s",
+            settings.guild_id,
+            missing_user_ids,
+        )
     return [
         {
             "user_id": user_id,
@@ -199,13 +206,23 @@ async def _build_admin_user_rows(settings: BotSettings) -> list[dict[str, object
     ]
 
 
-async def _build_access_summary_context(settings: BotSettings) -> dict[str, object]:
-    try:
-        role_name_map = await fetch_guild_role_map(settings.token, settings.guild_id)
-    except DiscordOAuthError:
-        role_name_map = {}
+async def _build_access_summary_context(db: DashboardDatabase, settings: BotSettings) -> dict[str, object]:
+    configured_role_ids = sorted(
+        set(settings.dashboard_role_channel_access.keys()) | set(settings.dashboard_role_full_access_ids)
+    )
+    role_name_map = db.get_cached_role_name_map(
+        guild_id=settings.guild_id,
+        role_ids=configured_role_ids,
+    )
+    missing_role_ids = [role_id for role_id in configured_role_ids if role_id not in role_name_map]
+    if missing_role_ids:
+        log.warning(
+            "Dashboard access summary is missing cached role names for guild_id=%s: %s",
+            settings.guild_id,
+            missing_role_ids,
+        )
     return {
-        "admin_user_rows": await _build_admin_user_rows(settings),
+        "admin_user_rows": await _build_admin_user_rows(db, settings),
         "role_access_rows": _build_role_access_summary(settings, role_name_map),
     }
 
@@ -308,6 +325,7 @@ async def lifespan(app: FastAPI):
     app.state.db.ensure_tag_tables()
     app.state.db.ensure_thread_notice_queue_table()
     app.state.db.ensure_thread_member_sync_queue_table()
+    app.state.db.ensure_guild_directory_tables()
     app.state.db.ensure_ticket_schema_updates()
     yield
 
@@ -515,7 +533,7 @@ def create_app() -> FastAPI:
         total_audit_pages = max(1, (total_audit_events + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE)
         audit_page = min(max(audit_page, 1), total_audit_pages)
         audit_events = db.list_audit_events(limit=AUDIT_PAGE_SIZE, offset=(audit_page - 1) * AUDIT_PAGE_SIZE)
-        access_context = await _build_access_summary_context(settings)
+        access_context = await _build_access_summary_context(db, settings)
         return TEMPLATES.TemplateResponse(
             "admin.html",
             _template_context(
@@ -835,6 +853,81 @@ def create_app() -> FastAPI:
         )
         return RedirectResponse(
             url=_ticket_detail_url(thread_id, notice="Internal note added."),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/notes/{note_id}/edit")
+    async def edit_ticket_note(
+        thread_id: int,
+        note_id: int,
+        request: Request,
+        note_text: str = Form(...),
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to edit internal notes.")
+        if ticket.get("status") == "deleted":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Cannot edit notes on a deleted ticket."),
+                status_code=303,
+            )
+
+        note = db.get_ticket_note(note_id, thread_id=thread_id)
+        if note is None:
+            return RedirectResponse(url=_ticket_detail_url(thread_id, error="Internal note not found."), status_code=303)
+
+        cleaned_note = note_text.strip()
+        if not cleaned_note:
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Internal note cannot be empty."),
+                status_code=303,
+            )
+
+        db.update_ticket_note(note_id=note_id, thread_id=thread_id, note_text=cleaned_note)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_internal_note_updated",
+            ticket_thread_id=thread_id,
+            metadata={"note_id": note_id, "note_length": len(cleaned_note)},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Internal note updated."),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/notes/{note_id}/delete")
+    async def delete_ticket_note(
+        thread_id: int,
+        note_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to delete internal notes.")
+
+        note = db.get_ticket_note(note_id, thread_id=thread_id)
+        if note is None:
+            return RedirectResponse(url=_ticket_detail_url(thread_id, error="Internal note not found."), status_code=303)
+
+        db.delete_ticket_note(note_id=note_id, thread_id=thread_id)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_internal_note_deleted",
+            ticket_thread_id=thread_id,
+            metadata={"note_id": note_id},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Internal note deleted."),
             status_code=303,
         )
 

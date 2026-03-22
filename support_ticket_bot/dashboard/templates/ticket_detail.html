@@ -136,16 +136,50 @@
         {% if ticket.status == 'deleted' %}
         <p class="tight-muted">Deleted tickets are read-only.</p>
         {% endif %}
-        {% if internal_notes %}
-        <div class="notes-list">
-            {% for note in internal_notes %}
-            <div class="note-item">
-                <div class="note-meta">{{ note.author_display_name }} (<code>{{ note.author_discord_user_id }}</code>) · {{ note.created_at }}</div>
-                <div class="note-body">{{ note.note_text }}</div>
+{% if internal_notes %}
+<div class="notes-list">
+    {% for note in internal_notes %}
+    <div class="note-item">
+        <div id="note-view-{{ note.id }}" class="note-view">
+            <div class="note-meta">{{ note.author_display_name }} (<code>{{ note.author_discord_user_id }}</code>) · {{ note.created_at }}</div>
+            <div class="note-body">{{ note.note_text }}</div>
+            {% if ticket.status != 'deleted' %}
+            <div class="note-actions">
+                <button
+                    class="button-secondary"
+                    type="button"
+                    onclick="document.getElementById('note-view-{{ note.id }}').classList.add('is-hidden'); document.getElementById('note-edit-{{ note.id }}').classList.remove('is-hidden');"
+                >
+                    Edit
+                </button>
+                <form method="post" action="/tickets/{{ ticket.thread_id }}/notes/{{ note.id }}/delete" onsubmit="return confirm('Delete this internal note?');">
+                    <button class="button-secondary" type="submit">Delete</button>
+                </form>
             </div>
-            {% endfor %}
+            {% endif %}
         </div>
-        {% else %}
+        {% if ticket.status != 'deleted' %}
+        <div id="note-edit-{{ note.id }}" class="note-edit is-hidden">
+            <div class="note-meta">{{ note.author_display_name }} (<code>{{ note.author_discord_user_id }}</code>) · {{ note.created_at }}</div>
+            <form class="note-edit-form" method="post" action="/tickets/{{ ticket.thread_id }}/notes/{{ note.id }}/edit">
+                <textarea name="note_text" required>{{ note.note_text }}</textarea>
+                <div class="note-actions">
+                    <button
+                        class="button-secondary"
+                        type="button"
+                        onclick="document.getElementById('note-edit-{{ note.id }}').classList.add('is-hidden'); document.getElementById('note-view-{{ note.id }}').classList.remove('is-hidden');"
+                    >
+                        Cancel
+                    </button>
+                    <button class="button-primary" type="submit">Save changes</button>
+                </div>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
         <p class="tight-muted">No internal notes yet.</p>
         {% endif %}
     </div>

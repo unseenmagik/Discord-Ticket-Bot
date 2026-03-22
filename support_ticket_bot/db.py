@@ -97,6 +97,28 @@ CREATE TABLE IF NOT EXISTS ticket_thread_member_sync (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 THREAD_MEMBER_SYNC_QUEUE_TABLE_NAME = "ticket_thread_member_sync"
+GUILD_MEMBER_DIRECTORY_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS guild_member_directory (
+    guild_id BIGINT NOT NULL,
+    discord_user_id BIGINT NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    PRIMARY KEY (guild_id, discord_user_id),
+    INDEX idx_guild_member_directory_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+GUILD_MEMBER_DIRECTORY_TABLE_NAME = "guild_member_directory"
+GUILD_ROLE_DIRECTORY_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS guild_role_directory (
+    guild_id BIGINT NOT NULL,
+    role_id BIGINT NOT NULL,
+    role_name VARCHAR(255) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    PRIMARY KEY (guild_id, role_id),
+    INDEX idx_guild_role_directory_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+GUILD_ROLE_DIRECTORY_TABLE_NAME = "guild_role_directory"
 TICKET_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
     ("assignee_discord_user_id", "ALTER TABLE tickets ADD COLUMN assignee_discord_user_id BIGINT NULL"),
     ("assignee_display_name", "ALTER TABLE tickets ADD COLUMN assignee_display_name VARCHAR(255) NULL"),
@@ -248,6 +270,10 @@ class TicketDatabase:
             await self.execute(THREAD_NOTICE_QUEUE_TABLE_SQL)
         if not await self._table_exists(THREAD_MEMBER_SYNC_QUEUE_TABLE_NAME):
             await self.execute(THREAD_MEMBER_SYNC_QUEUE_TABLE_SQL)
+        if not await self._table_exists(GUILD_MEMBER_DIRECTORY_TABLE_NAME):
+            await self.execute(GUILD_MEMBER_DIRECTORY_TABLE_SQL)
+        if not await self._table_exists(GUILD_ROLE_DIRECTORY_TABLE_NAME):
+            await self.execute(GUILD_ROLE_DIRECTORY_TABLE_SQL)
         await self._ensure_ticket_schema_updates()
 
     async def close(self) -> None:
@@ -583,6 +609,68 @@ class TicketDatabase:
     async def list_tag_definitions(self) -> list[dict[str, Any]]:
         return await self.fetchall("SELECT * FROM ticket_tags ORDER BY tag_name ASC, id ASC")
 
+    async def sync_guild_member_directory(
+        self,
+        *,
+        guild_id: int,
+        target_user_ids: list[int],
+        member_map: dict[int, str],
+        synced_at: str,
+    ) -> None:
+        if not target_user_ids:
+            return
+        placeholders = ", ".join(["%s"] * len(target_user_ids))
+        await self.execute(
+            f"DELETE FROM guild_member_directory WHERE guild_id = %s AND discord_user_id IN ({placeholders})",
+            (guild_id, *target_user_ids),
+        )
+        for user_id in target_user_ids:
+            display_name = member_map.get(user_id)
+            if not display_name:
+                continue
+            await self.execute(
+                """
+                INSERT INTO guild_member_directory (
+                    guild_id,
+                    discord_user_id,
+                    display_name,
+                    updated_at
+                ) VALUES (%s, %s, %s, %s)
+                """,
+                (guild_id, user_id, display_name, synced_at),
+            )
+
+    async def sync_guild_role_directory(
+        self,
+        *,
+        guild_id: int,
+        target_role_ids: list[int],
+        role_map: dict[int, str],
+        synced_at: str,
+    ) -> None:
+        if not target_role_ids:
+            return
+        placeholders = ", ".join(["%s"] * len(target_role_ids))
+        await self.execute(
+            f"DELETE FROM guild_role_directory WHERE guild_id = %s AND role_id IN ({placeholders})",
+            (guild_id, *target_role_ids),
+        )
+        for role_id in target_role_ids:
+            role_name = role_map.get(role_id)
+            if not role_name:
+                continue
+            await self.execute(
+                """
+                INSERT INTO guild_role_directory (
+                    guild_id,
+                    role_id,
+                    role_name,
+                    updated_at
+                ) VALUES (%s, %s, %s, %s)
+                """,
+                (guild_id, role_id, role_name, synced_at),
+            )
+
     async def get_tag_definition_by_name(self, tag_name: str) -> dict[str, Any] | None:
         key = _tag_key(tag_name)
         if not key:
@@ -768,6 +856,14 @@ class DashboardDatabase:
             with conn.cursor() as cur:
                 cur.execute(THREAD_MEMBER_SYNC_QUEUE_TABLE_SQL)
 
+    def ensure_guild_directory_tables(self) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                if not self._table_exists(GUILD_MEMBER_DIRECTORY_TABLE_NAME):
+                    cur.execute(GUILD_MEMBER_DIRECTORY_TABLE_SQL)
+                if not self._table_exists(GUILD_ROLE_DIRECTORY_TABLE_NAME):
+                    cur.execute(GUILD_ROLE_DIRECTORY_TABLE_SQL)
+
     def _table_exists(self, table_name: str) -> bool:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -811,6 +907,42 @@ class DashboardDatabase:
                     )
                     if cur.fetchone() is None:
                         cur.execute(alter_sql)
+
+    def get_cached_member_display_map(self, *, guild_id: int, user_ids: list[int]) -> dict[int, str]:
+        self.ensure_guild_directory_tables()
+        if not user_ids:
+            return {}
+        placeholders = ", ".join(["%s"] * len(user_ids))
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT discord_user_id, display_name
+                    FROM guild_member_directory
+                    WHERE guild_id = %s AND discord_user_id IN ({placeholders})
+                    """,
+                    (guild_id, *user_ids),
+                )
+                rows = list(cur.fetchall())
+        return {int(row["discord_user_id"]): str(row["display_name"]) for row in rows}
+
+    def get_cached_role_name_map(self, *, guild_id: int, role_ids: list[int]) -> dict[int, str]:
+        self.ensure_guild_directory_tables()
+        if not role_ids:
+            return {}
+        placeholders = ", ".join(["%s"] * len(role_ids))
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT role_id, role_name
+                    FROM guild_role_directory
+                    WHERE guild_id = %s AND role_id IN ({placeholders})
+                    """,
+                    (guild_id, *role_ids),
+                )
+                rows = list(cur.fetchall())
+        return {int(row["role_id"]): str(row["role_name"]) for row in rows}
 
     def _ticket_access_filter_sql(
         self,
@@ -1076,6 +1208,21 @@ class DashboardDatabase:
                 )
                 return list(cur.fetchall())
 
+    def get_ticket_note(self, note_id: int, *, thread_id: int) -> dict[str, Any] | None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM ticket_internal_notes
+                    WHERE id = %s AND thread_id = %s
+                    LIMIT 1
+                    """,
+                    (note_id, thread_id),
+                )
+                return cur.fetchone()
+
     def add_ticket_note(
         self,
         *,
@@ -1105,6 +1252,31 @@ class DashboardDatabase:
                         note_text,
                         created_at,
                     ),
+                )
+
+    def update_ticket_note(self, *, note_id: int, thread_id: int, note_text: str) -> None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE ticket_internal_notes
+                    SET note_text = %s
+                    WHERE id = %s AND thread_id = %s
+                    """,
+                    (note_text, note_id, thread_id),
+                )
+
+    def delete_ticket_note(self, *, note_id: int, thread_id: int) -> None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM ticket_internal_notes
+                    WHERE id = %s AND thread_id = %s
+                    """,
+                    (note_id, thread_id),
                 )
 
     def list_tag_definitions(self) -> list[dict[str, Any]]:
