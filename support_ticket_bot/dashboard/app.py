@@ -307,6 +307,7 @@ async def lifespan(app: FastAPI):
     app.state.db.ensure_internal_notes_table()
     app.state.db.ensure_tag_tables()
     app.state.db.ensure_thread_notice_queue_table()
+    app.state.db.ensure_thread_member_sync_queue_table()
     app.state.db.ensure_ticket_schema_updates()
     yield
 
@@ -640,6 +641,12 @@ def create_app() -> FastAPI:
             assigned_by_discord_user_id=viewer.discord_user_id,
             assigned_by_display_name=viewer.display_name,
         )
+        db.enqueue_thread_member_sync(
+            thread_id=thread_id,
+            discord_user_id=viewer.discord_user_id,
+            action="add",
+            created_at=utc_now_iso(),
+        )
         action_label = "reassigned" if ticket.get("assignee_discord_user_id") else "assigned"
         await _post_ticket_thread_notice(
             db,
@@ -684,7 +691,15 @@ def create_app() -> FastAPI:
             )
 
         previous_assignee = ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id")
+        previous_assignee_id = ticket.get("assignee_discord_user_id")
         db.clear_ticket_assignee(thread_id=thread_id)
+        if previous_assignee_id:
+            db.enqueue_thread_member_sync(
+                thread_id=thread_id,
+                discord_user_id=int(previous_assignee_id),
+                action="remove",
+                created_at=utc_now_iso(),
+            )
         await _post_ticket_thread_notice(
             db,
             thread_id,

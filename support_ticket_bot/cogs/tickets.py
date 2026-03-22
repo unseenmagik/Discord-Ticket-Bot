@@ -25,6 +25,7 @@ class TicketsCog(commands.Cog):
         self.bot = bot
         self.cleanup_closed_threads.start()
         self.dispatch_dashboard_thread_notices.start()
+        self.sync_dashboard_thread_members.start()
 
     async def cog_load(self) -> None:
         await self.register_persistent_views()
@@ -32,6 +33,7 @@ class TicketsCog(commands.Cog):
     def cog_unload(self) -> None:
         self.cleanup_closed_threads.cancel()
         self.dispatch_dashboard_thread_notices.cancel()
+        self.sync_dashboard_thread_members.cancel()
 
     async def register_persistent_views(self) -> None:
         self.bot.add_view(TicketPanelView(self.bot))
@@ -215,6 +217,15 @@ class TicketsCog(commands.Cog):
             return user
         try:
             return await self.bot.fetch_user(user_id)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            return None
+
+    async def _resolve_guild_member(self, guild: discord.Guild, user_id: int) -> discord.Member | None:
+        member = guild.get_member(user_id)
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(user_id)
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
             return None
 
@@ -896,12 +907,59 @@ class TicketsCog(commands.Cog):
                 log.warning("Failed to dispatch queued dashboard notice notice_id=%s thread_id=%s", notice_id, thread_id)
             await self.bot.db.mark_thread_notice_processed(notice_id=notice_id, processed_at=utc_now_iso())
 
+    @tasks.loop(seconds=5)
+    async def sync_dashboard_thread_members(self) -> None:
+        jobs = await self.bot.db.list_pending_thread_member_syncs(limit=25)
+        for job in jobs:
+            sync_id = int(job["id"])
+            thread_id = int(job["thread_id"])
+            discord_user_id = int(job["discord_user_id"])
+            action = str(job["action"]).lower()
+
+            thread = await self._resolve_thread(thread_id)
+            if thread is None:
+                log.warning("Skipping queued thread member sync for unknown thread_id=%s sync_id=%s", thread_id, sync_id)
+                await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
+                continue
+
+            member = await self._resolve_guild_member(thread.guild, discord_user_id)
+            if member is None:
+                log.warning(
+                    "Skipping queued thread member sync for unknown discord_user_id=%s thread_id=%s sync_id=%s",
+                    discord_user_id,
+                    thread_id,
+                    sync_id,
+                )
+                await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
+                continue
+
+            try:
+                if action == "add":
+                    await thread.add_user(member)
+                elif action == "remove":
+                    await thread.remove_user(member)
+                else:
+                    log.warning("Skipping queued thread member sync with unknown action=%s sync_id=%s", action, sync_id)
+            except discord.HTTPException:
+                log.exception(
+                    "Failed to process queued thread member sync action=%s thread_id=%s discord_user_id=%s sync_id=%s",
+                    action,
+                    thread_id,
+                    discord_user_id,
+                    sync_id,
+                )
+            await self.bot.db.mark_thread_member_sync_processed(sync_id=sync_id, processed_at=utc_now_iso())
+
     @cleanup_closed_threads.before_loop
     async def before_cleanup(self) -> None:
         await self.bot.wait_until_ready()
 
     @dispatch_dashboard_thread_notices.before_loop
     async def before_dispatch_dashboard_thread_notices(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @sync_dashboard_thread_members.before_loop
+    async def before_sync_dashboard_thread_members(self) -> None:
         await self.bot.wait_until_ready()
 
     @app_commands.command(name="setup_tickets", description="Post the ticket panel")

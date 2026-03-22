@@ -84,6 +84,19 @@ CREATE TABLE IF NOT EXISTS ticket_thread_notices (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 THREAD_NOTICE_QUEUE_TABLE_NAME = "ticket_thread_notices"
+THREAD_MEMBER_SYNC_QUEUE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS ticket_thread_member_sync (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    discord_user_id BIGINT NOT NULL,
+    action VARCHAR(16) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    processed_at VARCHAR(64) NULL,
+    INDEX idx_ticket_thread_member_sync_processed_created (processed_at, created_at),
+    INDEX idx_ticket_thread_member_sync_thread (thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+THREAD_MEMBER_SYNC_QUEUE_TABLE_NAME = "ticket_thread_member_sync"
 TICKET_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
     ("assignee_discord_user_id", "ALTER TABLE tickets ADD COLUMN assignee_discord_user_id BIGINT NULL"),
     ("assignee_display_name", "ALTER TABLE tickets ADD COLUMN assignee_display_name VARCHAR(255) NULL"),
@@ -233,6 +246,8 @@ class TicketDatabase:
             await self.execute(TAG_ASSIGNMENTS_TABLE_SQL)
         if not await self._table_exists(THREAD_NOTICE_QUEUE_TABLE_NAME):
             await self.execute(THREAD_NOTICE_QUEUE_TABLE_SQL)
+        if not await self._table_exists(THREAD_MEMBER_SYNC_QUEUE_TABLE_NAME):
+            await self.execute(THREAD_MEMBER_SYNC_QUEUE_TABLE_SQL)
         await self._ensure_ticket_schema_updates()
 
     async def close(self) -> None:
@@ -523,6 +538,48 @@ class TicketDatabase:
             (processed_at, notice_id),
         )
 
+    async def enqueue_thread_member_sync(
+        self,
+        *,
+        thread_id: int,
+        discord_user_id: int,
+        action: str,
+        created_at: str,
+    ) -> None:
+        await self.execute(
+            """
+            INSERT INTO ticket_thread_member_sync (
+                thread_id,
+                discord_user_id,
+                action,
+                created_at
+            ) VALUES (%s, %s, %s, %s)
+            """,
+            (thread_id, discord_user_id, action, created_at),
+        )
+
+    async def list_pending_thread_member_syncs(self, *, limit: int = 25) -> list[dict[str, Any]]:
+        return await self.fetchall(
+            """
+            SELECT *
+            FROM ticket_thread_member_sync
+            WHERE processed_at IS NULL
+            ORDER BY created_at ASC, id ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+
+    async def mark_thread_member_sync_processed(self, *, sync_id: int, processed_at: str) -> None:
+        await self.execute(
+            """
+            UPDATE ticket_thread_member_sync
+            SET processed_at = %s
+            WHERE id = %s
+            """,
+            (processed_at, sync_id),
+        )
+
     async def list_tag_definitions(self) -> list[dict[str, Any]]:
         return await self.fetchall("SELECT * FROM ticket_tags ORDER BY tag_name ASC, id ASC")
 
@@ -689,6 +746,13 @@ class DashboardDatabase:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(THREAD_NOTICE_QUEUE_TABLE_SQL)
+
+    def ensure_thread_member_sync_queue_table(self) -> None:
+        if self._table_exists(THREAD_MEMBER_SYNC_QUEUE_TABLE_NAME):
+            return
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(THREAD_MEMBER_SYNC_QUEUE_TABLE_SQL)
 
     def _table_exists(self, table_name: str) -> bool:
         with self._connect() as conn:
@@ -1183,6 +1247,29 @@ class DashboardDatabase:
                     ) VALUES (%s, %s, %s, %s, %s)
                     """,
                     (thread_id, title, description, color, created_at),
+                )
+
+    def enqueue_thread_member_sync(
+        self,
+        *,
+        thread_id: int,
+        discord_user_id: int,
+        action: str,
+        created_at: str,
+    ) -> None:
+        self.ensure_thread_member_sync_queue_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ticket_thread_member_sync (
+                        thread_id,
+                        discord_user_id,
+                        action,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (thread_id, discord_user_id, action, created_at),
                 )
 
     def count_audit_events(self) -> int:

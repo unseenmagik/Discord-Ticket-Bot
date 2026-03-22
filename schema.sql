@@ -89,3 +89,14 @@ CREATE TABLE IF NOT EXISTS ticket_thread_notices (
     INDEX idx_ticket_thread_notices_processed_created (processed_at, created_at),
     INDEX idx_ticket_thread_notices_thread (thread_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_thread_member_sync (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    discord_user_id BIGINT NOT NULL,
+    action VARCHAR(16) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    processed_at VARCHAR(64) NULL,
+    INDEX idx_ticket_thread_member_sync_processed_created (processed_at, created_at),
+    INDEX idx_ticket_thread_member_sync_thread (thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
