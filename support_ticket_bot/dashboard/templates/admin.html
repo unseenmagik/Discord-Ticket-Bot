@@ -1,227 +1,316 @@
 {% extends 'base.html' %}
 {% block content %}
-<h1>Admin</h1>
-<p class="muted">Configure the ticket panel message and the first bot message sent inside each ticket thread.</p>
+<h1>Admin Control Panel</h1>
+<p class="muted">Manage dashboard access, audit activity, tags, and ticket messaging from one place.</p>
 
-{% if saved %}
-<div class="notice">Message templates saved. New panels and new tickets will use the updated text.</div>
-{% endif %}
-{% if notice %}
-<div class="notice">{{ notice }}</div>
-{% endif %}
-{% if error %}
-<div class="error-box">{{ error }}</div>
-{% endif %}
-
-<div class="split section-gap">
-    <div class="card">
-        <h2>Dashboard Access</h2>
-        <p class="muted">Admins can see every dashboard page. Non-admins can still see their own tickets, plus queue access granted by configured Discord roles.</p>
-
-        <h3>Admin user IDs</h3>
-        {% if admin_user_rows %}
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Discord ID</th>
-                        <th>Discord Name</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in admin_user_rows %}
-                    <tr>
-                        <td><code>{{ row.user_id }}</code></td>
-                        <td>{{ row.display_name }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="muted">No dashboard admins are configured yet.</p>
-        {% endif %}
-
-        <h3>Role-based queue access</h3>
-        {% if role_access_rows %}
-        <div class="table-scroll">
-            <table class="table-wide">
-                <thead>
-                    <tr>
-                        <th>Role ID</th>
-                        <th>Role Name</th>
-                        <th>Scope</th>
-                        <th>Server Name</th>
-                        <th>Server ID</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in role_access_rows %}
-                    <tr>
-                        <td><code>{{ row.role_id }}</code></td>
-                        <td>{{ row.role_name }}</td>
-                        <td>{{ row.access_scope }}</td>
-                        <td>
-                            {% if row.queues %}
-                                {% for queue in row.queues %}
-                                    <div>{{ queue.label }}</div>
-                                {% endfor %}
-                            {% else %}
-                            All tracked queues
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if row.queues %}
-                                {% for queue in row.queues %}
-                                    <div><code>{{ queue.channel_id }}</code></div>
-                                {% endfor %}
-                            {% else %}
-                            All tracked queues
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="muted">No role-based queue visibility rules are configured.</p>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2>Recent Dashboard Audit</h2>
-        <p class="muted">Successful dashboard logins and transcript views are recorded here.</p>
-        {% if audit_events %}
-        <div class="table-scroll">
-            <table class="table-wide">
-                <thead>
-                    <tr>
-                        <th>When</th>
-                        <th>Event</th>
-                        <th>User</th>
-                        <th>Ticket</th>
-                        <th>Details</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for event in audit_events %}
-                    <tr>
-                        <td>{{ event.created_at }}</td>
-                        <td>{{ event.event_type }}</td>
-                        <td>{{ event.actor_display_name }} (<code>{{ event.actor_discord_user_id }}</code>)</td>
-                        <td>{% if event.ticket_thread_id %}<a href="/tickets/{{ event.ticket_thread_id }}">{{ event.ticket_thread_id }}</a>{% else %}—{% endif %}</td>
-                        <td>
-                            {% if event.metadata %}
-                                {% for key, value in event.metadata.items() %}
-                                <div><strong>{{ key }}:</strong> {{ value }}</div>
-                                {% endfor %}
-                            {% else %}
-                            —
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        <div class="pagination">
-            <div class="muted">Showing {{ audit_events|length }} of {{ audit_total_events }} audit log entries</div>
-            <div class="pagination-links">
-                {% if audit_has_prev %}
-                <a class="pagination-link" href="/admin?audit_page={{ audit_prev_page }}{% if saved %}&saved=1{% endif %}">Previous</a>
-                {% else %}
-                <span class="pagination-link disabled">Previous</span>
-                {% endif %}
-                <span class="muted">Page {{ audit_page }} of {{ audit_total_pages }}</span>
-                {% if audit_has_next %}
-                <a class="pagination-link" href="/admin?audit_page={{ audit_next_page }}{% if saved %}&saved=1{% endif %}">Next</a>
-                {% else %}
-                <span class="pagination-link disabled">Next</span>
-                {% endif %}
-            </div>
-        </div>
-        {% else %}
-        <p class="muted">No dashboard audit events have been recorded yet.</p>
-        {% endif %}
-    </div>
-</div>
-
-<div class="card section-gap">
-    <h2>Managed Tags</h2>
-    <p class="muted">Create reusable ticket tags here. Staff can apply these tags to tickets from Discord or the dashboard.</p>
-    <form class="inline-action-form" method="post" action="/admin/tags">
-        <input name="tag_name" type="text" placeholder="e.g. Billing, Escalated, Waiting on user" required>
-        <button type="submit">Create tag</button>
-    </form>
-    {% if tag_definitions %}
-    <div class="tag-list">
-        {% for tag in tag_definitions %}
-        <div class="tag-row">
-            <div id="tag-view-{{ tag.id }}" class="tag-view">
-                <div class="tag-row-main">
-                    <span class="tag-pill">{{ tag.tag_name }}</span>
-                    <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
-                </div>
-                <div class="tag-row-actions">
-                    <button
-                        class="button-secondary"
-                        type="button"
-                        onclick="document.getElementById('tag-view-{{ tag.id }}').classList.add('is-hidden'); document.getElementById('tag-edit-{{ tag.id }}').classList.remove('is-hidden');"
-                    >
-                        Edit
-                    </button>
-                    <form class="tag-delete-form" method="post" action="/admin/tags/{{ tag.id }}/delete">
-                        <button class="button-secondary" type="submit">Delete</button>
-                    </form>
-                </div>
-            </div>
-            <div id="tag-edit-{{ tag.id }}" class="tag-edit is-hidden">
-                <div class="tag-row-main">
-                    <span class="tag-pill">{{ tag.tag_name }}</span>
-                    <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
-                </div>
-                <form class="tag-edit-form" method="post" action="/admin/tags/{{ tag.id }}/edit">
-                    <input name="tag_name" type="text" value="{{ tag.tag_name }}" required>
-                    <div class="tag-row-actions">
-                        <button
-                            class="button-secondary"
-                            type="button"
-                            onclick="document.getElementById('tag-edit-{{ tag.id }}').classList.add('is-hidden'); document.getElementById('tag-view-{{ tag.id }}').classList.remove('is-hidden');"
-                        >
-                            Cancel
-                        </button>
-                        <button class="button-primary" type="submit">Save</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <p class="tight-muted">No tags have been created yet.</p>
+<div class="admin-tabs-shell">
+    {% if saved %}
+    <div class="notice">Message templates saved. New panels and new tickets will use the updated text.</div>
     {% endif %}
+    {% if notice %}
+    <div class="notice">{{ notice }}</div>
+    {% endif %}
+    {% if error %}
+    <div class="error-box">{{ error }}</div>
+    {% endif %}
+
+    <div class="admin-tabs" role="tablist" aria-label="Admin control panel sections">
+        <button class="admin-tab-button is-active" type="button" data-tab-target="managed-access">Managed Access</button>
+        <button class="admin-tab-button" type="button" data-tab-target="audit-log">Audit Log</button>
+        <button class="admin-tab-button" type="button" data-tab-target="tags">Tags</button>
+        <button class="admin-tab-button" type="button" data-tab-target="ticket-setup-panel">Ticket Setup Panel</button>
+        <button class="admin-tab-button" type="button" data-tab-target="ticket-welcome-message">Ticket Welcome Message</button>
+    </div>
+
+    <div id="managed-access" class="admin-tab-panel is-active">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Managed Access</h2>
+                <p class="muted">Admins can see every dashboard page. Non-admins can still see their own tickets, plus queue access granted by configured Discord roles.</p>
+            </div>
+
+            <div>
+                <h3>Admin user IDs</h3>
+                {% if admin_user_rows %}
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Discord ID</th>
+                                <th>Discord Name</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in admin_user_rows %}
+                            <tr>
+                                <td><code>{{ row.user_id }}</code></td>
+                                <td>{{ row.display_name }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="muted">No dashboard admins are configured yet.</p>
+                {% endif %}
+            </div>
+
+            <div>
+                <h3>Role-based queue access</h3>
+                {% if role_access_rows %}
+                <div class="table-scroll">
+                    <table class="table-wide">
+                        <thead>
+                            <tr>
+                                <th>Role ID</th>
+                                <th>Role Name</th>
+                                <th>Scope</th>
+                                <th>Server Name</th>
+                                <th>Server ID</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in role_access_rows %}
+                            <tr>
+                                <td><code>{{ row.role_id }}</code></td>
+                                <td>{{ row.role_name }}</td>
+                                <td>{{ row.access_scope }}</td>
+                                <td>
+                                    {% if row.queues %}
+                                        {% for queue in row.queues %}
+                                            <div>{{ queue.label }}</div>
+                                        {% endfor %}
+                                    {% else %}
+                                    All tracked queues
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.queues %}
+                                        {% for queue in row.queues %}
+                                            <div><code>{{ queue.channel_id }}</code></div>
+                                        {% endfor %}
+                                    {% else %}
+                                    All tracked queues
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="muted">No role-based queue visibility rules are configured.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div id="audit-log" class="admin-tab-panel">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Audit Log</h2>
+                <p class="muted">Successful dashboard logins and transcript views are recorded here.</p>
+            </div>
+
+            {% if audit_events %}
+            <div class="table-scroll">
+                <table class="table-wide">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Event</th>
+                            <th>User</th>
+                            <th>Ticket</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in audit_events %}
+                        <tr>
+                            <td>{{ event.created_at }}</td>
+                            <td>{{ event.event_type }}</td>
+                            <td>{{ event.actor_display_name }} (<code>{{ event.actor_discord_user_id }}</code>)</td>
+                            <td>{% if event.ticket_thread_id %}<a href="/tickets/{{ event.ticket_thread_id }}">{{ event.ticket_thread_id }}</a>{% else %}—{% endif %}</td>
+                            <td>
+                                {% if event.metadata %}
+                                    {% for key, value in event.metadata.items() %}
+                                    <div><strong>{{ key }}:</strong> {{ value }}</div>
+                                    {% endfor %}
+                                {% else %}
+                                —
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <div class="muted">Showing {{ audit_events|length }} of {{ audit_total_events }} audit log entries</div>
+                <div class="pagination-links">
+                    {% if audit_has_prev %}
+                    <a class="pagination-link" href="/admin?audit_page={{ audit_prev_page }}{% if saved %}&saved=1{% endif %}#audit-log">Previous</a>
+                    {% else %}
+                    <span class="pagination-link disabled">Previous</span>
+                    {% endif %}
+                    <span class="muted">Page {{ audit_page }} of {{ audit_total_pages }}</span>
+                    {% if audit_has_next %}
+                    <a class="pagination-link" href="/admin?audit_page={{ audit_next_page }}{% if saved %}&saved=1{% endif %}#audit-log">Next</a>
+                    {% else %}
+                    <span class="pagination-link disabled">Next</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <p class="muted">No dashboard audit events have been recorded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="tags" class="admin-tab-panel">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Tags</h2>
+                <p class="muted">Create reusable ticket tags here. Staff can apply these tags to tickets from Discord or the dashboard.</p>
+            </div>
+
+            <form class="inline-action-form" method="post" action="/admin/tags">
+                <input name="tag_name" type="text" placeholder="e.g. Billing, Escalated, Waiting on user" required>
+                <button type="submit">Create tag</button>
+            </form>
+
+            {% if tag_definitions %}
+            <div class="tag-list">
+                {% for tag in tag_definitions %}
+                <div class="tag-row">
+                    <div id="tag-view-{{ tag.id }}" class="tag-view">
+                        <div class="tag-row-main">
+                            <span class="tag-pill">{{ tag.tag_name }}</span>
+                            <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+                        </div>
+                        <div class="tag-row-actions">
+                            <button
+                                class="button-secondary"
+                                type="button"
+                                onclick="document.getElementById('tag-view-{{ tag.id }}').classList.add('is-hidden'); document.getElementById('tag-edit-{{ tag.id }}').classList.remove('is-hidden');"
+                            >
+                                Edit
+                            </button>
+                            <form class="tag-delete-form" method="post" action="/admin/tags/{{ tag.id }}/delete">
+                                <button class="button-secondary" type="submit">Delete</button>
+                            </form>
+                        </div>
+                    </div>
+                    <div id="tag-edit-{{ tag.id }}" class="tag-edit is-hidden">
+                        <div class="tag-row-main">
+                            <span class="tag-pill">{{ tag.tag_name }}</span>
+                            <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+                        </div>
+                        <form class="tag-edit-form" method="post" action="/admin/tags/{{ tag.id }}/edit">
+                            <input name="tag_name" type="text" value="{{ tag.tag_name }}" required>
+                            <div class="tag-row-actions">
+                                <button
+                                    class="button-secondary"
+                                    type="button"
+                                    onclick="document.getElementById('tag-edit-{{ tag.id }}').classList.add('is-hidden'); document.getElementById('tag-view-{{ tag.id }}').classList.remove('is-hidden');"
+                                >
+                                    Cancel
+                                </button>
+                                <button class="button-primary" type="submit">Save</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="tight-muted">No tags have been created yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="ticket-setup-panel" class="admin-tab-panel">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Ticket Setup Panel</h2>
+                <p class="muted">Configure the message shown in the public panel where users begin creating tickets.</p>
+            </div>
+
+            <form class="admin-form-stack" method="post" action="/admin/messages">
+                <input name="thread_embed_title" type="hidden" value="{{ templates.thread_embed_title }}">
+                <input name="thread_embed_description" type="hidden" value="{{ templates.thread_embed_description }}">
+
+                <label for="panel_title">Panel title</label>
+                <input id="panel_title" name="panel_title" type="text" value="{{ templates.panel_title }}" required>
+
+                <label for="panel_description">Panel description</label>
+                <textarea id="panel_description" name="panel_description" required>{{ templates.panel_description }}</textarea>
+                <div class="help">Available placeholders: <code>{guild_name}</code>, <code>{panel_channel_mention}</code></div>
+
+                <div class="button-row">
+                    <button type="submit">Save panel settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="ticket-welcome-message" class="admin-tab-panel">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Ticket Welcome Message</h2>
+                <p class="muted">Configure the first bot message sent inside each ticket thread after creation.</p>
+            </div>
+
+            <form class="admin-form-stack" method="post" action="/admin/messages">
+                <input name="panel_title" type="hidden" value="{{ templates.panel_title }}">
+                <input name="panel_description" type="hidden" value="{{ templates.panel_description }}">
+
+                <label for="thread_embed_title">Thread message title</label>
+                <input id="thread_embed_title" name="thread_embed_title" type="text" value="{{ templates.thread_embed_title }}" required>
+
+                <label for="thread_embed_description">Thread message description</label>
+                <textarea id="thread_embed_description" name="thread_embed_description" required>{{ templates.thread_embed_description }}</textarea>
+                <div class="help">Available placeholders: <code>{guild_name}</code>, <code>{server_label}</code>, <code>{user_mention}</code>, <code>{user_name}</code>, <code>{thread_id}</code></div>
+
+                <div class="button-row">
+                    <button type="submit">Save welcome message</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 
-<div class="card">
-    <form method="post" action="/admin/messages">
-        <h2>Ticket Panel</h2>
-        <label for="panel_title">Panel title</label>
-        <input id="panel_title" name="panel_title" type="text" value="{{ templates.panel_title }}" required>
+<script>
+(() => {
+    const storageKey = "admin-active-tab";
+    const buttons = Array.from(document.querySelectorAll(".admin-tab-button"));
+    const panels = Array.from(document.querySelectorAll(".admin-tab-panel"));
+    if (!buttons.length || !panels.length) {
+        return;
+    }
 
-        <label for="panel_description">Panel description</label>
-        <textarea id="panel_description" name="panel_description" required>{{ templates.panel_description }}</textarea>
-        <div class="help">Available placeholders: <code>{guild_name}</code>, <code>{panel_channel_mention}</code></div>
+    function setActiveTab(tabId) {
+        buttons.forEach((button) => {
+            button.classList.toggle("is-active", button.dataset.tabTarget === tabId);
+        });
+        panels.forEach((panel) => {
+            panel.classList.toggle("is-active", panel.id === tabId);
+        });
+        sessionStorage.setItem(storageKey, tabId);
+    }
 
-        <h2>Thread Welcome</h2>
-        <label for="thread_embed_title">Thread message title</label>
-        <input id="thread_embed_title" name="thread_embed_title" type="text" value="{{ templates.thread_embed_title }}" required>
+    const hashTab = window.location.hash ? window.location.hash.slice(1) : null;
+    const storedTab = sessionStorage.getItem(storageKey);
+    const initialTab = [hashTab, storedTab, "managed-access"].find((value) => panels.some((panel) => panel.id === value));
+    setActiveTab(initialTab);
 
-        <label for="thread_embed_description">Thread message description</label>
-        <textarea id="thread_embed_description" name="thread_embed_description" required>{{ templates.thread_embed_description }}</textarea>
-        <div class="help">Available placeholders: <code>{guild_name}</code>, <code>{server_label}</code>, <code>{user_mention}</code>, <code>{user_name}</code>, <code>{thread_id}</code></div>
-
-        <button type="submit">Save changes</button>
-    </form>
-</div>
+    buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+            const tabId = button.dataset.tabTarget;
+            setActiveTab(tabId);
+            history.replaceState(null, "", `#${tabId}`);
+        });
+    });
+})();
+</script>
 {% endblock %}

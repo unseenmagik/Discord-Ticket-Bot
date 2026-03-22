@@ -84,11 +84,21 @@
         .inline-action-form { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
         .inline-action-form select { margin:0; max-width:280px; }
         .inline-action-form button { width:auto; }
+        .admin-tabs-shell { display:grid; gap:16px; }
+        .admin-tabs { display:flex; gap:10px; flex-wrap:wrap; padding:8px; border-radius:12px; background:#1f2937; }
+        .admin-tab-button { width:auto; padding:10px 14px; border:1px solid #374151; border-radius:10px; background:#111827; color:#d1d5db; font-weight:600; }
+        .admin-tab-button.is-active { background:#2563eb; border-color:#2563eb; color:#eff6ff; }
+        .admin-tab-panel { display:none; }
+        .admin-tab-panel.is-active { display:block; }
+        .admin-panel-stack { display:grid; gap:16px; }
+        .admin-form-stack { display:grid; gap:14px; }
         .tag-list { display:grid; gap:12px; margin-top:12px; }
         .tag-row { padding:14px; border-radius:10px; background:#111827; border:1px solid #374151; }
         .tag-meta { color:#9ca3af; font-size:0.92rem; }
         .tag-view, .tag-edit { display:grid; gap:12px; }
         .tag-row-main { min-width:0; }
+        .tag-view { grid-template-columns:minmax(0, 1fr) auto; align-items:flex-start; }
+        .tag-view .tag-row-actions { justify-content:flex-end; }
         .tag-row-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .tag-edit-form { display:grid; gap:12px; }
         .tag-edit-form input { width:100%; max-width:420px; margin:0; }
@@ -98,6 +108,13 @@
         .table-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
         .table-actions form { margin:0; }
         .table-actions button { width:auto; padding:8px 12px; }
+        @media (max-width: 760px) {
+            .topbar { flex-direction:column; align-items:flex-start; gap:12px; }
+            .topbar-left { flex-direction:column; align-items:flex-start; gap:12px; }
+            .admin-tabs { overflow-x:auto; flex-wrap:nowrap; }
+            .admin-tab-button { white-space:nowrap; }
+            .tag-view { grid-template-columns:1fr; }
+        }
     </style>
 </head>
 <body>
