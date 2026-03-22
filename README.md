@@ -107,6 +107,7 @@ mysql -u ticketbot -p discord_tickets < schema.sql
 - MariaDB/MySQL connection details in `[database]`, using the same database name, username, and password you created in step 5
 - Dashboard Discord OAuth settings in `[dashboard]`
 - `interaction_delete_after_seconds` in `[tickets]` to control how long ephemeral action replies stay visible
+- `allow_thread_owner_reopen = true` in `[tickets]` if you want the ticket opener to be able to reopen their own closed ticket
 - Server label → channel ID mappings in `[servers]`
 - Optional role-based dashboard ticket access in `[dashboard_role_access]`
 

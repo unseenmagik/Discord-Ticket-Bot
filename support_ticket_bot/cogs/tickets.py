@@ -808,10 +808,16 @@ class TicketsCog(commands.Cog):
             return
         await self._reply(interaction, "Reopening ticket...")
         await thread.edit(archived=False, locked=False, reason=f"Ticket reopened by {interaction.user}")
+        existing_tags = await self.bot.db.list_ticket_tags(thread.id)
+        for tag in existing_tags:
+            await self.bot.db.remove_ticket_tag(thread_id=thread.id, tag_id=tag["id"])
         await self._send_thread_notice(
             thread,
             title="Ticket Reopened",
-            description=f"This ticket was reopened by {interaction.user.mention}.",
+            description=(
+                f"This ticket was reopened by {interaction.user.mention}."
+                + (" Existing tags were cleared." if existing_tags else "")
+            ),
             color=self.REOPENED_EMBED_COLOR,
         )
         try:
@@ -826,6 +832,16 @@ class TicketsCog(commands.Cog):
             reopened_by_id=interaction.user.id,
             reopened_by_name=str(interaction.user),
         )
+        if existing_tags:
+            await self._record_audit_event(
+                event_type="ticket_tags_cleared_on_reopen",
+                actor=interaction.user,
+                ticket_thread_id=thread.id,
+                metadata={
+                    "tag_count": len(existing_tags),
+                    "tag_names": [str(tag["tag_name"]) for tag in existing_tags],
+                },
+            )
         await self._send_ticket_reopened_dm(ticket, thread)
         log.info(
             "Ticket reopened thread_id=%s guild_id=%s reopened_by_id=%s",
