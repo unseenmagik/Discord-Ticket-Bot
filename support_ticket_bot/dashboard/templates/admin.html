@@ -158,17 +158,41 @@
     <div class="tag-list">
         {% for tag in tag_definitions %}
         <div class="tag-row">
-            <div class="tag-row-main">
-                <span class="tag-pill">{{ tag.tag_name }}</span>
-                <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+            <div id="tag-view-{{ tag.id }}" class="tag-view">
+                <div class="tag-row-main">
+                    <span class="tag-pill">{{ tag.tag_name }}</span>
+                    <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+                </div>
+                <div class="tag-row-actions">
+                    <button
+                        class="button-secondary"
+                        type="button"
+                        onclick="document.getElementById('tag-view-{{ tag.id }}').classList.add('is-hidden'); document.getElementById('tag-edit-{{ tag.id }}').classList.remove('is-hidden');"
+                    >
+                        Edit
+                    </button>
+                    <form class="tag-delete-form" method="post" action="/admin/tags/{{ tag.id }}/delete">
+                        <button class="button-secondary" type="submit">Delete</button>
+                    </form>
+                </div>
             </div>
-            <div class="tag-row-actions">
+            <div id="tag-edit-{{ tag.id }}" class="tag-edit is-hidden">
+                <div class="tag-row-main">
+                    <span class="tag-pill">{{ tag.tag_name }}</span>
+                    <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+                </div>
                 <form class="tag-edit-form" method="post" action="/admin/tags/{{ tag.id }}/edit">
                     <input name="tag_name" type="text" value="{{ tag.tag_name }}" required>
-                    <button class="button-secondary" type="submit">Save</button>
-                </form>
-                <form class="tag-delete-form" method="post" action="/admin/tags/{{ tag.id }}/delete">
-                    <button class="button-secondary" type="submit">Delete</button>
+                    <div class="tag-row-actions">
+                        <button
+                            class="button-secondary"
+                            type="button"
+                            onclick="document.getElementById('tag-edit-{{ tag.id }}').classList.add('is-hidden'); document.getElementById('tag-view-{{ tag.id }}').classList.remove('is-hidden');"
+                        >
+                            Cancel
+                        </button>
+                        <button class="button-primary" type="submit">Save</button>
+                    </div>
                 </form>
             </div>
         </div>
