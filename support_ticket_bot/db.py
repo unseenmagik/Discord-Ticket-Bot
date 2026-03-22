@@ -1076,6 +1076,21 @@ class DashboardDatabase:
                 )
                 return list(cur.fetchall())
 
+    def get_ticket_note(self, note_id: int, *, thread_id: int) -> dict[str, Any] | None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM ticket_internal_notes
+                    WHERE id = %s AND thread_id = %s
+                    LIMIT 1
+                    """,
+                    (note_id, thread_id),
+                )
+                return cur.fetchone()
+
     def add_ticket_note(
         self,
         *,
@@ -1105,6 +1120,31 @@ class DashboardDatabase:
                         note_text,
                         created_at,
                     ),
+                )
+
+    def update_ticket_note(self, *, note_id: int, thread_id: int, note_text: str) -> None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE ticket_internal_notes
+                    SET note_text = %s
+                    WHERE id = %s AND thread_id = %s
+                    """,
+                    (note_text, note_id, thread_id),
+                )
+
+    def delete_ticket_note(self, *, note_id: int, thread_id: int) -> None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM ticket_internal_notes
+                    WHERE id = %s AND thread_id = %s
+                    """,
+                    (note_id, thread_id),
                 )
 
     def list_tag_definitions(self) -> list[dict[str, Any]]:

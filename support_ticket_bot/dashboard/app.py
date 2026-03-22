@@ -838,6 +838,81 @@ def create_app() -> FastAPI:
             status_code=303,
         )
 
+    @app.post("/tickets/{thread_id}/notes/{note_id}/edit")
+    async def edit_ticket_note(
+        thread_id: int,
+        note_id: int,
+        request: Request,
+        note_text: str = Form(...),
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to edit internal notes.")
+        if ticket.get("status") == "deleted":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Cannot edit notes on a deleted ticket."),
+                status_code=303,
+            )
+
+        note = db.get_ticket_note(note_id, thread_id=thread_id)
+        if note is None:
+            return RedirectResponse(url=_ticket_detail_url(thread_id, error="Internal note not found."), status_code=303)
+
+        cleaned_note = note_text.strip()
+        if not cleaned_note:
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Internal note cannot be empty."),
+                status_code=303,
+            )
+
+        db.update_ticket_note(note_id=note_id, thread_id=thread_id, note_text=cleaned_note)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_internal_note_updated",
+            ticket_thread_id=thread_id,
+            metadata={"note_id": note_id, "note_length": len(cleaned_note)},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Internal note updated."),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/notes/{note_id}/delete")
+    async def delete_ticket_note(
+        thread_id: int,
+        note_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to delete internal notes.")
+
+        note = db.get_ticket_note(note_id, thread_id=thread_id)
+        if note is None:
+            return RedirectResponse(url=_ticket_detail_url(thread_id, error="Internal note not found."), status_code=303)
+
+        db.delete_ticket_note(note_id=note_id, thread_id=thread_id)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_internal_note_deleted",
+            ticket_thread_id=thread_id,
+            metadata={"note_id": note_id},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Internal note deleted."),
+            status_code=303,
+        )
+
     @app.post("/tickets/{thread_id}/tags")
     async def add_ticket_tag(
         thread_id: int,
