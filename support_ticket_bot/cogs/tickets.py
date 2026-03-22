@@ -433,12 +433,17 @@ class TicketsCog(commands.Cog):
                 log.exception("Failed to store HTML transcript for thread_id=%s", thread.id)
 
         dashboard_link = self.bot.settings.dashboard_base_url.rstrip("/") + f"/tickets/{thread.id}"
+        assignee_line = ""
+        if ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id"):
+            assignee_value = ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id")
+            assignee_line = f"**Assignee:** {assignee_value}\n"
         embed = self._embed(
             "Ticket Closed",
             (
                 f"**Thread:** {thread.mention}\n"
                 f"**Server:** {ticket['server_label']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
+                f"{assignee_line}"
                 f"**Closed by:** {closed_by.mention}\n"
                 f"**Dashboard:** [Click Here]({dashboard_link})\n"
                 f"**Delete after:** {self.bot.settings.delete_closed_threads_after_hours} hour(s)"

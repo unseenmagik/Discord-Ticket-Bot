@@ -34,6 +34,31 @@ CREATE TABLE IF NOT EXISTS dashboard_audit_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 AUDIT_LOG_TABLE_NAME = "dashboard_audit_log"
+INTERNAL_NOTES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS ticket_internal_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    author_discord_user_id BIGINT NOT NULL,
+    author_display_name VARCHAR(255) NOT NULL,
+    note_text TEXT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    INDEX idx_ticket_internal_notes_thread_created (thread_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+INTERNAL_NOTES_TABLE_NAME = "ticket_internal_notes"
+TICKET_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
+    ("assignee_discord_user_id", "ALTER TABLE tickets ADD COLUMN assignee_discord_user_id BIGINT NULL"),
+    ("assignee_display_name", "ALTER TABLE tickets ADD COLUMN assignee_display_name VARCHAR(255) NULL"),
+    ("assigned_at", "ALTER TABLE tickets ADD COLUMN assigned_at VARCHAR(64) NULL"),
+    (
+        "assigned_by_discord_user_id",
+        "ALTER TABLE tickets ADD COLUMN assigned_by_discord_user_id BIGINT NULL",
+    ),
+    (
+        "assigned_by_display_name",
+        "ALTER TABLE tickets ADD COLUMN assigned_by_display_name VARCHAR(255) NULL",
+    ),
+)
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -154,6 +179,9 @@ class TicketDatabase:
             await self.execute(APP_SETTINGS_TABLE_SQL)
         if not await self._table_exists(AUDIT_LOG_TABLE_NAME):
             await self.execute(AUDIT_LOG_TABLE_SQL)
+        if not await self._table_exists(INTERNAL_NOTES_TABLE_NAME):
+            await self.execute(INTERNAL_NOTES_TABLE_SQL)
+        await self._ensure_ticket_schema_updates()
 
     async def close(self) -> None:
         if self.pool is not None:
@@ -195,6 +223,23 @@ class TicketDatabase:
             (self.settings.db_name, table_name),
         )
         return row is not None
+
+    async def _column_exists(self, table_name: str, column_name: str) -> bool:
+        row = await self.fetchone(
+            """
+            SELECT 1 AS present
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s AND column_name = %s
+            LIMIT 1
+            """,
+            (self.settings.db_name, table_name, column_name),
+        )
+        return row is not None
+
+    async def _ensure_ticket_schema_updates(self) -> None:
+        for column_name, alter_sql in TICKET_SCHEMA_UPDATES:
+            if not await self._column_exists("tickets", column_name):
+                await self.execute(alter_sql)
 
     async def create_ticket(
         self,
@@ -304,6 +349,50 @@ class TicketDatabase:
             (log_message_id, thread_id),
         )
 
+    async def assign_ticket(
+        self,
+        *,
+        thread_id: int,
+        assignee_discord_user_id: int,
+        assignee_display_name: str,
+        assigned_at: str,
+        assigned_by_discord_user_id: int,
+        assigned_by_display_name: str,
+    ) -> None:
+        await self.execute(
+            """
+            UPDATE tickets
+            SET assignee_discord_user_id = %s,
+                assignee_display_name = %s,
+                assigned_at = %s,
+                assigned_by_discord_user_id = %s,
+                assigned_by_display_name = %s
+            WHERE thread_id = %s
+            """,
+            (
+                assignee_discord_user_id,
+                assignee_display_name,
+                assigned_at,
+                assigned_by_discord_user_id,
+                assigned_by_display_name,
+                thread_id,
+            ),
+        )
+
+    async def clear_ticket_assignee(self, *, thread_id: int) -> None:
+        await self.execute(
+            """
+            UPDATE tickets
+            SET assignee_discord_user_id = NULL,
+                assignee_display_name = NULL,
+                assigned_at = NULL,
+                assigned_by_discord_user_id = NULL,
+                assigned_by_display_name = NULL
+            WHERE thread_id = %s
+            """,
+            (thread_id,),
+        )
+
     async def list_open_tickets(self) -> list[dict[str, Any]]:
         return await self.fetchall("SELECT * FROM tickets WHERE status = 'open'")
 
@@ -366,6 +455,13 @@ class DashboardDatabase:
             with conn.cursor() as cur:
                 cur.execute(AUDIT_LOG_TABLE_SQL)
 
+    def ensure_internal_notes_table(self) -> None:
+        if self._table_exists(INTERNAL_NOTES_TABLE_NAME):
+            return
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(INTERNAL_NOTES_TABLE_SQL)
+
     def _table_exists(self, table_name: str) -> bool:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -379,6 +475,36 @@ class DashboardDatabase:
                     (self.settings.db_name, table_name),
                 )
                 return cur.fetchone() is not None
+
+    def _column_exists(self, table_name: str, column_name: str) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1 AS present
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                    LIMIT 1
+                    """,
+                    (self.settings.db_name, table_name, column_name),
+                )
+                return cur.fetchone() is not None
+
+    def ensure_ticket_schema_updates(self) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for column_name, alter_sql in TICKET_SCHEMA_UPDATES:
+                    cur.execute(
+                        """
+                        SELECT 1 AS present
+                        FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                        LIMIT 1
+                        """,
+                        (self.settings.db_name, "tickets", column_name),
+                    )
+                    if cur.fetchone() is None:
+                        cur.execute(alter_sql)
 
     def _ticket_access_filter_sql(
         self,
@@ -519,6 +645,102 @@ class DashboardDatabase:
                         """,
                         (key, value),
                     )
+
+    def assign_ticket(
+        self,
+        *,
+        thread_id: int,
+        assignee_discord_user_id: int,
+        assignee_display_name: str,
+        assigned_at: str,
+        assigned_by_discord_user_id: int,
+        assigned_by_display_name: str,
+    ) -> None:
+        self.ensure_ticket_schema_updates()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE tickets
+                    SET assignee_discord_user_id = %s,
+                        assignee_display_name = %s,
+                        assigned_at = %s,
+                        assigned_by_discord_user_id = %s,
+                        assigned_by_display_name = %s
+                    WHERE thread_id = %s
+                    """,
+                    (
+                        assignee_discord_user_id,
+                        assignee_display_name,
+                        assigned_at,
+                        assigned_by_discord_user_id,
+                        assigned_by_display_name,
+                        thread_id,
+                    ),
+                )
+
+    def clear_ticket_assignee(self, *, thread_id: int) -> None:
+        self.ensure_ticket_schema_updates()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE tickets
+                    SET assignee_discord_user_id = NULL,
+                        assignee_display_name = NULL,
+                        assigned_at = NULL,
+                        assigned_by_discord_user_id = NULL,
+                        assigned_by_display_name = NULL
+                    WHERE thread_id = %s
+                    """,
+                    (thread_id,),
+                )
+
+    def list_ticket_notes(self, thread_id: int) -> list[dict[str, Any]]:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM ticket_internal_notes
+                    WHERE thread_id = %s
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (thread_id,),
+                )
+                return list(cur.fetchall())
+
+    def add_ticket_note(
+        self,
+        *,
+        thread_id: int,
+        author_discord_user_id: int,
+        author_display_name: str,
+        note_text: str,
+        created_at: str,
+    ) -> None:
+        self.ensure_internal_notes_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ticket_internal_notes (
+                        thread_id,
+                        author_discord_user_id,
+                        author_display_name,
+                        note_text,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        thread_id,
+                        author_discord_user_id,
+                        author_display_name,
+                        note_text,
+                        created_at,
+                    ),
+                )
 
     def add_audit_event(
         self,

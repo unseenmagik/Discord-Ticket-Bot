@@ -14,6 +14,8 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 - **Transcript DM** sent to the ticket opener when a ticket is closed
 - **MariaDB / MySQL** storage instead of SQLite
 - **FastAPI web dashboard** for stats and ticket browsing
+- **Ticket assignment** in the dashboard with assignee visibility on ticket views and transcript logs
+- **Internal staff notes** stored in the database and shown only to staff-capable dashboard viewers
 - **Auto-delete** for closed threads after a configurable delay
 - Modular structure with cogs, views, shared config, DB layer, and dashboard app
 
@@ -217,6 +219,12 @@ Optional dashboard ticket access by Discord role can be configured in `[dashboar
 - Users always see tickets they opened themselves
 - A matching role grants access to tickets for the configured channel IDs
 - `*` grants access to all tracked tickets, but does not grant admin-page access
+
+Staff-capable dashboard viewers can also:
+
+- assign open tickets to themselves from the ticket detail page
+- clear the current assignee from an open ticket
+- add internal notes that are only visible inside the dashboard
 
 To access the WebUI:
 
