@@ -789,7 +789,12 @@ class TicketsCog(commands.Cog):
             interaction.user.id,
             log_message_id,
         )
-        await thread.edit(archived=True, locked=True, reason=f"Ticket closed by {interaction.user}")
+        should_lock_thread = not self.bot.settings.allow_thread_owner_reopen
+        await thread.edit(
+            archived=True,
+            locked=should_lock_thread,
+            reason=f"Ticket closed by {interaction.user}",
+        )
 
     async def handle_reopen_from_log(self, interaction: discord.Interaction, thread_id: int) -> None:
         thread = await self._resolve_thread(thread_id)
