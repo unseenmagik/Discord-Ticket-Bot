@@ -460,12 +460,17 @@ def create_app() -> FastAPI:
         ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
+        transcript_path = TRANSCRIPTS_DIR / f"{thread_id}.html"
+        transcript_url = ticket.get("transcript_message_url") or (
+            f"/tickets/{thread_id}/transcript" if transcript_path.exists() else None
+        )
         return TEMPLATES.TemplateResponse(
             "ticket_detail.html",
             _template_context(
                 request,
                 viewer,
                 ticket=ticket,
+                transcript_url=transcript_url,
             ),
         )
 

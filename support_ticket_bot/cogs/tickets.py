@@ -73,6 +73,14 @@ class TicketsCog(commands.Cog):
         except (discord.NotFound, discord.HTTPException):
             pass
 
+    async def _delete_message_quietly(self, message: discord.Message, *, context: str) -> None:
+        try:
+            await message.delete()
+        except discord.NotFound:
+            return
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning("Failed to delete message during %s message_id=%s", context, message.id)
+
     async def _find_thread_control_message(self, thread: discord.Thread, thread_id: int) -> discord.Message | None:
         close_custom_id = f"ticket:close:{thread_id}"
         reopen_custom_id = f"ticket:thread_reopen:{thread_id}"
@@ -238,6 +246,41 @@ class TicketsCog(commands.Cog):
                 opener_id,
             )
 
+    def _member_has_staff_ticket_access(
+        self,
+        member: discord.Member,
+        *,
+        can_manage_threads: bool | None = None,
+    ) -> bool:
+        support_match = bool(set(role.id for role in member.roles) & set(self.bot.settings.support_role_ids))
+        if can_manage_threads is None:
+            can_manage_threads = bool(getattr(member.guild_permissions, "manage_threads", False))
+        return member.guild_permissions.administrator or can_manage_threads or support_match
+
+    def _user_can_manage_ticket_without_thread(
+        self,
+        interaction: discord.Interaction,
+        ticket: dict | None,
+        *,
+        reopening: bool = False,
+    ) -> bool:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            return False
+        member = interaction.user
+        is_opener = bool(ticket and ticket.get("opener_id") == member.id)
+        has_staff_access = self._member_has_staff_ticket_access(member)
+
+        if reopening:
+            if self.bot.settings.allow_thread_owner_reopen and is_opener:
+                return True
+            return has_staff_access
+
+        if self.bot.settings.close_requires_staff:
+            return has_staff_access
+        if self.bot.settings.allow_thread_owner_close and is_opener:
+            return True
+        return has_staff_access
+
     async def _user_can_manage_ticket(
         self,
         interaction: discord.Interaction,
@@ -251,21 +294,19 @@ class TicketsCog(commands.Cog):
         member = interaction.user
         parent = thread.parent
         parent_perms = parent.permissions_for(member) if parent else member.guild_permissions
-        is_admin = member.guild_permissions.administrator
-        can_manage_threads = parent_perms.manage_threads
-        support_match = bool(set(role.id for role in member.roles) & set(self.bot.settings.support_role_ids))
         is_opener = bool(ticket and ticket.get("opener_id") == member.id)
+        has_staff_access = self._member_has_staff_ticket_access(member, can_manage_threads=parent_perms.manage_threads)
 
         if reopening:
             if self.bot.settings.allow_thread_owner_reopen and is_opener:
                 return True
-            return is_admin or can_manage_threads or support_match
+            return has_staff_access
 
         if self.bot.settings.close_requires_staff:
-            return is_admin or can_manage_threads or support_match
+            return has_staff_access
         if self.bot.settings.allow_thread_owner_close and is_opener:
             return True
-        return is_admin or can_manage_threads or support_match
+        return has_staff_access
 
     async def handle_ticket_creation(self, interaction: discord.Interaction, chosen_label: str) -> None:
         if interaction.guild is None:
@@ -296,9 +337,11 @@ class TicketsCog(commands.Cog):
                 reason=f"Support ticket opened by {interaction.user} for {chosen_label}",
             )
         except discord.Forbidden:
+            await self._delete_message_quietly(seed_message, context="thread creation cleanup")
             await self._reply(interaction, "I do not have permission to create threads there.")
             return
         except discord.HTTPException as exc:
+            await self._delete_message_quietly(seed_message, context="thread creation cleanup")
             await self._reply(interaction, f"Failed to create ticket thread: {exc}")
             return
 
@@ -370,12 +413,25 @@ class TicketsCog(commands.Cog):
         if log_channel is None or not isinstance(log_channel, discord.TextChannel):
             return None, None
 
-        bundle = await generate_transcripts(
-            thread,
-            include_txt=self.bot.settings.save_txt_transcript,
-            include_html=self.bot.settings.save_html_transcript,
-        )
+        try:
+            bundle = await generate_transcripts(
+                thread,
+                include_txt=self.bot.settings.save_txt_transcript,
+                include_html=self.bot.settings.save_html_transcript,
+            )
+        except Exception:
+            log.exception("Failed to generate transcripts for thread_id=%s", thread.id)
+            return None, None
+
         files = [item for item in (bundle.txt_file, bundle.html_file) if item is not None]
+        transcript_url = None
+        if bundle.transcript_html is not None:
+            try:
+                store_html_transcript(thread.id, bundle.transcript_html)
+                transcript_url = self.bot.settings.dashboard_base_url.rstrip("/") + f"/tickets/{thread.id}/transcript"
+            except OSError:
+                log.exception("Failed to store HTML transcript for thread_id=%s", thread.id)
+
         dashboard_link = self.bot.settings.dashboard_base_url.rstrip("/") + f"/tickets/{thread.id}"
         embed = self._embed(
             "Ticket Closed",
@@ -389,14 +445,15 @@ class TicketsCog(commands.Cog):
             ),
         )
         view = TicketLogControlsView(self.bot, thread.id)
-        log_message = await log_channel.send(embed=embed, files=files, view=view)
+        try:
+            log_message = await log_channel.send(embed=embed, files=files, view=view)
+        except discord.HTTPException:
+            log.exception("Failed to send transcript log for thread_id=%s channel_id=%s", thread.id, channel_id)
+            return None, transcript_url
+
         await self.bot.db.set_log_message_id(thread.id, log_message.id)
         self.bot.add_view(view, message_id=log_message.id)
-        transcript_url = None
-        if bundle.transcript_html is not None:
-            store_html_transcript(thread.id, bundle.transcript_html)
-            transcript_url = self.bot.settings.dashboard_base_url.rstrip("/") + f"/tickets/{thread.id}/transcript"
-        elif log_message.jump_url:
+        if transcript_url is None and log_message.jump_url:
             transcript_url = log_message.jump_url
         return log_message.id, transcript_url
 
@@ -483,7 +540,11 @@ class TicketsCog(commands.Cog):
         if ticket is None:
             await self._reply(interaction, "That thread is not tracked as a ticket.")
             return
-        if thread and not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=True):
+        if thread is not None:
+            allowed = await self._user_can_manage_ticket(interaction, thread, ticket, reopening=True)
+        else:
+            allowed = self._user_can_manage_ticket_without_thread(interaction, ticket, reopening=True)
+        if not allowed:
             await self._reply(interaction, "You do not have permission to delete this ticket.")
             return
         await self._reply(interaction, "Deleting ticket thread...")
