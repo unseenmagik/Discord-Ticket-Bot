@@ -17,6 +17,7 @@ A modular Discord support ticket bot built with `discord.py`, `aiomysql`, and `F
 - **Ticket assignment** in the dashboard with assignee visibility on ticket views and transcript logs
 - **Internal staff notes** stored in the database and shown only to staff-capable dashboard viewers
 - **Managed ticket tags** that admins can define and staff can apply from Discord or the dashboard
+- **Dashboard-to-Discord sync** so dashboard assignment and tag changes are posted back into ticket threads by the bot
 - **Auto-delete** for closed threads after a configurable delay
 - Modular structure with cogs, views, shared config, DB layer, and dashboard app
 
@@ -234,6 +235,14 @@ Staff-capable dashboard viewers can also:
 - add internal notes that are only visible inside the dashboard
 - apply and remove managed tags from ticket detail pages
 
+Dashboard ticket actions that affect a live ticket thread are synced back into Discord by the bot:
+
+- assignment and unassignment notices are posted into the ticket thread
+- assigned users are added to or removed from the ticket thread
+- tag add and tag remove notices are posted into the ticket thread
+
+These dashboard-originated Discord updates are queued in the database and then dispatched by the bot, so they may appear a few seconds after the web action completes.
+
 Admins can manage the available tag list from:
 
 - the `Admin` page in the dashboard
@@ -312,4 +321,5 @@ If your bot is running on a remote server, keep `host = 127.0.0.1` if you only w
 - Successful dashboard logins and transcript views are written to the `dashboard_audit_log` table and shown on the `Admin` page.
 - Closed ticket log messages can link back to the dashboard using the `base_url` configured in `[dashboard]`.
 - The bot stores ticket data in MariaDB/MySQL, and the dashboard reads from the same database to display ticket history and statistics.
+- Dashboard-originated ticket thread updates are queued in `ticket_thread_notices` and `ticket_thread_member_sync`, then posted into Discord by the bot.
 - Full transcript message text requires the Discord Message Content Intent to be enabled both in `config.ini` and in the Discord Developer Portal.
