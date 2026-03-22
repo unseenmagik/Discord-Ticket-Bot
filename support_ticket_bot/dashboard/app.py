@@ -29,6 +29,7 @@ from support_ticket_bot.dashboard.auth import (
     fetch_discord_member_roles,
     fetch_discord_user,
     load_viewer_from_cookie,
+    post_discord_bot_message,
     post_discord_bot_embed,
     validate_state_cookie,
 )
@@ -127,7 +128,10 @@ async def _post_ticket_thread_notice(
             color=color,
         )
     except DiscordOAuthError:
-        pass
+        try:
+            await post_discord_bot_message(settings.token, thread_id, f"**{title}**\n{description}")
+        except DiscordOAuthError:
+            pass
 
 
 def _admin_url(

@@ -58,6 +58,25 @@
     <div class="card">
         <h2>Assignment</h2>
         <p class="muted">Claim this ticket for yourself or clear the current owner.</p>
+        {% if ticket.assignee_discord_user_id %}
+        <div class="note-item" style="margin-bottom: 16px;">
+            <div class="note-meta">Current assignee</div>
+            <div class="note-body">
+                {{ ticket.assignee_display_name or 'Unknown user' }}
+                (<code>{{ ticket.assignee_discord_user_id }}</code>)
+                {% if ticket.assigned_at %}
+                <br>
+                Assigned {{ ticket.assigned_at }}
+                {% endif %}
+                {% if ticket.assigned_by_display_name %}
+                <br>
+                Assigned by {{ ticket.assigned_by_display_name }}
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <p class="tight-muted">No one is currently assigned to this ticket.</p>
+        {% endif %}
         <div class="button-row">
             <form method="post" action="/tickets/{{ ticket.thread_id }}/assign">
                 <button type="submit" {% if ticket.status != 'open' %}disabled{% endif %}>Assign to me</button>

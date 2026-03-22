@@ -72,7 +72,11 @@ class TicketsCog(commands.Cog):
         try:
             await thread.send(embed=self._notice_embed(title, description, color=color))
         except discord.HTTPException:
-            pass
+            log.warning("Failed to send embed thread notice title=%s thread_id=%s; falling back to text.", title, thread.id)
+            try:
+                await thread.send(f"**{title}**\n{description}")
+            except discord.HTTPException:
+                log.exception("Failed to send fallback thread notice title=%s thread_id=%s", title, thread.id)
 
     async def _reply(self, interaction: discord.Interaction, content: str, *, delete_after: float | None = None) -> None:
         if delete_after is None:
