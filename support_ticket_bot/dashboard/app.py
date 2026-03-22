@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
@@ -83,6 +83,29 @@ def _ticket_access_kwargs(viewer: DashboardViewer) -> dict[str, object]:
         "channel_ids": None if allow_all else viewer.allowed_channel_ids,
         "allow_all": allow_all,
     }
+
+
+def _viewer_has_staff_ticket_access(viewer: DashboardViewer) -> bool:
+    return viewer.is_admin or viewer.has_global_ticket_access or bool(viewer.allowed_channel_ids)
+
+
+def _viewer_can_manage_ticket(viewer: DashboardViewer, ticket: dict[str, object]) -> bool:
+    if viewer.is_admin or viewer.has_global_ticket_access:
+        return True
+    target_channel_id = ticket.get("target_channel_id")
+    try:
+        return int(target_channel_id) in viewer.allowed_channel_ids
+    except (TypeError, ValueError):
+        return False
+
+
+def _ticket_detail_url(thread_id: int, *, notice: str | None = None, error: str | None = None) -> str:
+    query: dict[str, str] = {}
+    if notice:
+        query["notice"] = notice
+    if error:
+        query["error"] = error
+    return f"/tickets/{thread_id}" + (f"?{urlencode(query)}" if query else "")
 
 
 def _queue_label_map(settings: BotSettings) -> dict[int, str]:
@@ -244,6 +267,8 @@ async def lifespan(app: FastAPI):
     app.state.db = DashboardDatabase(settings)
     app.state.db.ensure_app_settings_table()
     app.state.db.ensure_dashboard_audit_table()
+    app.state.db.ensure_internal_notes_table()
+    app.state.db.ensure_ticket_schema_updates()
     yield
 
 
@@ -375,6 +400,7 @@ def create_app() -> FastAPI:
                 tickets=tickets,
                 status_filter=status_filter,
                 limited_access=not (viewer.is_admin or viewer.has_global_ticket_access),
+                show_staff_ticket_fields=_viewer_has_staff_ticket_access(viewer),
             ),
         )
 
@@ -455,7 +481,13 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/admin?saved=1", status_code=303)
 
     @app.get("/tickets/{thread_id}", response_class=HTMLResponse)
-    async def ticket_detail(thread_id: int, request: Request, viewer: DashboardViewer = Depends(require_viewer)):
+    async def ticket_detail(
+        thread_id: int,
+        request: Request,
+        notice: str | None = None,
+        error: str | None = None,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
         db: DashboardDatabase = request.app.state.db
         ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
         if ticket is None:
@@ -464,6 +496,8 @@ def create_app() -> FastAPI:
         transcript_url = ticket.get("transcript_message_url") or (
             f"/tickets/{thread_id}/transcript" if transcript_path.exists() else None
         )
+        can_manage_ticket = _viewer_can_manage_ticket(viewer, ticket)
+        internal_notes = db.list_ticket_notes(thread_id) if can_manage_ticket else []
         return TEMPLATES.TemplateResponse(
             "ticket_detail.html",
             _template_context(
@@ -471,7 +505,131 @@ def create_app() -> FastAPI:
                 viewer,
                 ticket=ticket,
                 transcript_url=transcript_url,
+                can_manage_ticket=can_manage_ticket,
+                internal_notes=internal_notes,
+                notice=notice,
+                error=error,
             ),
+        )
+
+    @app.post("/tickets/{thread_id}/assign")
+    async def assign_ticket_to_self(
+        thread_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to assign this ticket.")
+        if ticket.get("status") != "open":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Only open tickets can be assigned."),
+                status_code=303,
+            )
+
+        db.assign_ticket(
+            thread_id=thread_id,
+            assignee_discord_user_id=viewer.discord_user_id,
+            assignee_display_name=viewer.display_name,
+            assigned_at=utc_now_iso(),
+            assigned_by_discord_user_id=viewer.discord_user_id,
+            assigned_by_display_name=viewer.display_name,
+        )
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_assigned",
+            ticket_thread_id=thread_id,
+            metadata={"assignee_display_name": viewer.display_name, "assignee_discord_user_id": viewer.discord_user_id},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Ticket assigned to you."),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/unassign")
+    async def unassign_ticket(
+        thread_id: int,
+        request: Request,
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to update this ticket.")
+        if ticket.get("status") != "open":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Only open tickets can be unassigned."),
+                status_code=303,
+            )
+        if not ticket.get("assignee_discord_user_id"):
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, notice="Ticket was already unassigned."),
+                status_code=303,
+            )
+
+        previous_assignee = ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id")
+        db.clear_ticket_assignee(thread_id=thread_id)
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_unassigned",
+            ticket_thread_id=thread_id,
+            metadata={"previous_assignee": previous_assignee},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Ticket unassigned."),
+            status_code=303,
+        )
+
+    @app.post("/tickets/{thread_id}/notes")
+    async def add_ticket_note(
+        thread_id: int,
+        request: Request,
+        note_text: str = Form(...),
+        viewer: DashboardViewer = Depends(require_viewer),
+    ):
+        db: DashboardDatabase = request.app.state.db
+        ticket = db.get_ticket(thread_id, **_ticket_access_kwargs(viewer))
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _viewer_can_manage_ticket(viewer, ticket):
+            raise HTTPException(status_code=403, detail="You do not have permission to add internal notes.")
+
+        cleaned_note = note_text.strip()
+        if not cleaned_note:
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Internal note cannot be empty."),
+                status_code=303,
+            )
+        if ticket.get("status") == "deleted":
+            return RedirectResponse(
+                url=_ticket_detail_url(thread_id, error="Cannot add notes to a deleted ticket."),
+                status_code=303,
+            )
+
+        db.add_ticket_note(
+            thread_id=thread_id,
+            author_discord_user_id=viewer.discord_user_id,
+            author_display_name=viewer.display_name,
+            note_text=cleaned_note,
+            created_at=utc_now_iso(),
+        )
+        _log_dashboard_audit_event(
+            request,
+            viewer=viewer,
+            event_type="ticket_internal_note_added",
+            ticket_thread_id=thread_id,
+            metadata={"note_length": len(cleaned_note)},
+        )
+        return RedirectResponse(
+            url=_ticket_detail_url(thread_id, notice="Internal note added."),
+            status_code=303,
         )
 
     @app.get("/tickets/{thread_id}/transcript", response_class=HTMLResponse)

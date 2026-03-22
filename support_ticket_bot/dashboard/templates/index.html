@@ -24,6 +24,9 @@
             <th>Status</th>
             <th>Server</th>
             <th>Opened By</th>
+            {% if show_staff_ticket_fields %}
+            <th>Assignee</th>
+            {% endif %}
             <th>Created</th>
             <th>Details</th>
         </tr>
@@ -35,6 +38,9 @@
             <td><span class="pill {{ ticket.status }}">{{ ticket.status }}</span></td>
             <td>{{ ticket.server_label }}</td>
             <td>{{ ticket.opener_name }}</td>
+            {% if show_staff_ticket_fields %}
+            <td>{{ ticket.assignee_display_name or 'Unassigned' }}</td>
+            {% endif %}
             <td>{{ ticket.created_at }}</td>
             <td><a href="/tickets/{{ ticket.thread_id }}">Open</a></td>
         </tr>

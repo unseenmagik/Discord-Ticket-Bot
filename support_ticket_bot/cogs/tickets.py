@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import discord
 from discord import app_commands
@@ -96,9 +97,6 @@ class TicketsCog(commands.Cog):
         return None
 
     async def _set_thread_controls(self, thread: discord.Thread, *, closed: bool) -> None:
-        if thread.archived:
-            return
-
         control_message = await self._find_thread_control_message(thread, thread.id)
         if control_message is None:
             return
@@ -246,6 +244,123 @@ class TicketsCog(commands.Cog):
                 opener_id,
             )
 
+    async def _send_ticket_reopened_dm(self, ticket: dict, thread: discord.Thread) -> None:
+        opener_id = ticket.get("opener_id")
+        if not opener_id:
+            return
+
+        user = await self._resolve_ticket_user(opener_id)
+        if user is None:
+            log.warning("Could not resolve ticket opener for reopened DM opener_id=%s", opener_id)
+            return
+
+        embed = self._embed(
+            "Ticket Reopened",
+            "Your ticket has been reopened.",
+        )
+        embed.color = discord.Color.orange()
+        embed.add_field(name="Ticket Name", value=thread.name, inline=False)
+        embed.add_field(name="Queue", value=str(ticket.get("server_label") or "Unknown"), inline=True)
+        embed.add_field(name="Ticket ID", value=f"`{thread.id}`", inline=True)
+        embed.add_field(name="Open Ticket", value=f"[Open in Discord]({self._thread_link(thread)})", inline=False)
+
+        try:
+            await user.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning(
+                "Failed to send ticket reopened DM for thread_id=%s opener_id=%s",
+                thread.id,
+                opener_id,
+            )
+
+    async def _record_audit_event(
+        self,
+        *,
+        event_type: str,
+        actor: discord.abc.User,
+        ticket_thread_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            await self.bot.db.add_audit_event(
+                event_type=event_type,
+                actor_discord_user_id=actor.id,
+                actor_username=getattr(actor, "name", str(actor)),
+                actor_display_name=getattr(actor, "display_name", getattr(actor, "name", str(actor))),
+                ticket_thread_id=ticket_thread_id,
+                metadata=metadata,
+                created_at=utc_now_iso(),
+            )
+        except Exception:
+            log.exception("Failed to record audit event %s for thread_id=%s", event_type, ticket_thread_id)
+
+    async def _assign_ticket_to_member(
+        self,
+        *,
+        thread: discord.Thread,
+        ticket: dict,
+        assignee: discord.Member,
+        actor: discord.abc.User,
+    ) -> tuple[bool, str]:
+        if ticket["status"] != "open":
+            return False, "Only open tickets can be assigned."
+
+        existing_assignee_id = ticket.get("assignee_discord_user_id")
+        if existing_assignee_id == assignee.id:
+            return False, f"This ticket is already assigned to {assignee.mention}."
+
+        if assignee.bot:
+            return False, "Bots cannot be assigned to tickets."
+
+        if assignee.guild.id != thread.guild.id:
+            return False, "That user is not a member of this server."
+
+        try:
+            await thread.add_user(assignee)
+        except discord.Forbidden:
+            return False, "I do not have permission to add that user to this thread."
+        except discord.HTTPException as exc:
+            return False, f"Failed to add assignee to ticket: {exc}"
+
+        await self.bot.db.assign_ticket(
+            thread_id=thread.id,
+            assignee_discord_user_id=assignee.id,
+            assignee_display_name=assignee.display_name,
+            assigned_at=utc_now_iso(),
+            assigned_by_discord_user_id=actor.id,
+            assigned_by_display_name=getattr(actor, "display_name", str(actor)),
+        )
+
+        is_reassignment = existing_assignee_id is not None
+        action_label = "reassigned" if is_reassignment else "assigned"
+        try:
+            await thread.send(
+                f"This ticket has been {action_label} to {assignee.mention} by {getattr(actor, 'mention', str(actor))}."
+            )
+        except discord.HTTPException:
+            pass
+
+        await self._record_audit_event(
+            event_type="ticket_assigned",
+            actor=actor,
+            ticket_thread_id=thread.id,
+            metadata={
+                "assignee_discord_user_id": assignee.id,
+                "assignee_display_name": assignee.display_name,
+                "reassigned": is_reassignment,
+                "source": "discord_slash_command",
+            },
+        )
+        log.info(
+            "Ticket assigned thread_id=%s guild_id=%s assignee_id=%s assigned_by_id=%s reassigned=%s",
+            thread.id,
+            thread.guild.id,
+            assignee.id,
+            actor.id,
+            is_reassignment,
+        )
+        return True, f"Assigned {thread.mention} to {assignee.mention}."
+
     def _member_has_staff_ticket_access(
         self,
         member: discord.Member,
@@ -325,10 +440,11 @@ class TicketsCog(commands.Cog):
             log.warning("Failed to defer ticket creation interaction for user_id=%s", interaction.user.id)
 
         seed_message = await target_channel.send(f"New ticket request from {interaction.user.mention} for **{chosen_label}**")
-        thread_name = (
+        thread_name_prefix = (
             f"{settings.thread_name_prefix}-{clean_slug(chosen_label, 30)}-"
-            f"{clean_slug(interaction.user.name, 30)}-{interaction.user.id}"
-        )[:100]
+            f"{clean_slug(interaction.user.name, 30)}"
+        )
+        thread_name = thread_name_prefix[:100]
 
         try:
             thread = await seed_message.create_thread(
@@ -344,6 +460,13 @@ class TicketsCog(commands.Cog):
             await self._delete_message_quietly(seed_message, context="thread creation cleanup")
             await self._reply(interaction, f"Failed to create ticket thread: {exc}")
             return
+
+        final_thread_name = f"{thread_name_prefix}-{thread.id}"[:100]
+        if thread.name != final_thread_name:
+            try:
+                await thread.edit(name=final_thread_name, reason="Use ticket ID in thread name")
+            except discord.HTTPException:
+                log.warning("Failed to rename ticket thread thread_id=%s final_name=%s", thread.id, final_thread_name)
 
         try:
             await thread.add_user(interaction.user)
@@ -433,12 +556,17 @@ class TicketsCog(commands.Cog):
                 log.exception("Failed to store HTML transcript for thread_id=%s", thread.id)
 
         dashboard_link = self.bot.settings.dashboard_base_url.rstrip("/") + f"/tickets/{thread.id}"
+        assignee_line = ""
+        if ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id"):
+            assignee_value = ticket.get("assignee_display_name") or ticket.get("assignee_discord_user_id")
+            assignee_line = f"**Assignee:** {assignee_value}\n"
         embed = self._embed(
             "Ticket Closed",
             (
                 f"**Thread:** {thread.mention}\n"
                 f"**Server:** {ticket['server_label']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
+                f"{assignee_line}"
                 f"**Closed by:** {closed_by.mention}\n"
                 f"**Dashboard:** [Click Here]({dashboard_link})\n"
                 f"**Delete after:** {self.bot.settings.delete_closed_threads_after_hours} hour(s)"
@@ -520,13 +648,15 @@ class TicketsCog(commands.Cog):
             await thread.send(f"Ticket reopened by {interaction.user.mention}.")
         except discord.HTTPException:
             pass
-        await self._set_thread_controls(thread, closed=False)
+        refreshed_thread = await self._resolve_thread(thread.id)
+        await self._set_thread_controls(refreshed_thread or thread, closed=False)
         await self.bot.db.reopen_ticket(
             thread_id=thread.id,
             reopened_at=utc_now_iso(),
             reopened_by_id=interaction.user.id,
             reopened_by_name=str(interaction.user),
         )
+        await self._send_ticket_reopened_dm(ticket, thread)
         log.info(
             "Ticket reopened thread_id=%s guild_id=%s reopened_by_id=%s",
             thread.id,
@@ -690,11 +820,39 @@ class TicketsCog(commands.Cog):
                 f"**Status:** {ticket['status']}\n"
                 f"**Opened by:** <@{ticket['opener_id']}>\n"
                 f"**Server:** {ticket['server_label']}\n"
+                f"**Assignee:** {ticket.get('assignee_display_name') or 'Unassigned'}\n"
                 f"**Created:** {ticket['created_at']}\n"
                 f"**Closed:** {ticket.get('closed_at') or 'N/A'}"
             ),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="assign_ticket", description="Assign the current ticket to yourself or another user")
+    async def assign_ticket(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
+        if not isinstance(interaction.channel, discord.Thread):
+            await self._reply(interaction, "This command can only be used inside a ticket thread.")
+            return
+
+        thread = interaction.channel
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "This thread is not tracked as a ticket.")
+            return
+        if not await self._user_can_manage_ticket(interaction, thread, ticket, reopening=False):
+            await self._reply(interaction, "You do not have permission to assign this ticket.")
+            return
+        if not isinstance(interaction.user, discord.Member):
+            await self._reply(interaction, "This command must be used by a server member.")
+            return
+
+        assignee = user or interaction.user
+        assigned, message = await self._assign_ticket_to_member(
+            thread=thread,
+            ticket=ticket,
+            assignee=assignee,
+            actor=interaction.user,
+        )
+        await self._reply(interaction, message)
 
     @app_commands.command(name="add_ticket_user", description="Add a user to the current ticket thread")
     async def add_ticket_user(self, interaction: discord.Interaction, user: discord.Member) -> None:

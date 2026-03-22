@@ -2,11 +2,22 @@
 {% block content %}
 <h1>Ticket {{ ticket.thread_id }}</h1>
 <p><a href="/">← Back to dashboard</a></p>
+{% if notice %}
+<div class="notice">{{ notice }}</div>
+{% endif %}
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% endif %}
 <div class="card">
     <div class="grid">
         <div class="label">Status</div><div class="value"><span class="pill {{ ticket.status }}">{{ ticket.status }}</span></div>
         <div class="label">Server</div><div class="value">{{ ticket.server_label }}</div>
         <div class="label">Opened by</div><div class="value">{{ ticket.opener_name }} ({{ ticket.opener_id }})</div>
+        {% if can_manage_ticket %}
+        <div class="label">Assignee</div><div class="value">{{ ticket.assignee_display_name or 'Unassigned' }}</div>
+        <div class="label">Assigned at</div><div class="value">{{ ticket.assigned_at or '—' }}</div>
+        <div class="label">Assigned by</div><div class="value">{{ ticket.assigned_by_display_name or '—' }}</div>
+        {% endif %}
         {% if is_admin %}
         <div class="label">Guild ID</div><div class="value">{{ ticket.guild_id }}</div>
         <div class="label">Target channel ID</div><div class="value">{{ ticket.target_channel_id }}</div>
@@ -32,4 +43,47 @@
         </div>
     </div>
 </div>
+{% if can_manage_ticket %}
+<div class="split" style="margin-top: 16px;">
+    <div class="card">
+        <h2>Assignment</h2>
+        <p class="muted">Claim this ticket for yourself or clear the current owner.</p>
+        <div class="button-row">
+            <form method="post" action="/tickets/{{ ticket.thread_id }}/assign">
+                <button type="submit" {% if ticket.status != 'open' %}disabled{% endif %}>Assign to me</button>
+            </form>
+            <form method="post" action="/tickets/{{ ticket.thread_id }}/unassign">
+                <button class="button-secondary" type="submit" {% if ticket.status != 'open' or not ticket.assignee_discord_user_id %}disabled{% endif %}>Unassign</button>
+            </form>
+        </div>
+        {% if ticket.status != 'open' %}
+        <p class="tight-muted">Assignment changes are only available while the ticket is open.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Internal Notes</h2>
+        <p class="muted">Private staff notes stored in the dashboard only.</p>
+        <form class="form-tight" method="post" action="/tickets/{{ ticket.thread_id }}/notes">
+            <textarea name="note_text" placeholder="Add internal context, handoff notes, or follow-up details..." {% if ticket.status == 'deleted' %}disabled{% endif %}></textarea>
+            <button type="submit" {% if ticket.status == 'deleted' %}disabled{% endif %}>Add note</button>
+        </form>
+        {% if ticket.status == 'deleted' %}
+        <p class="tight-muted">Deleted tickets are read-only.</p>
+        {% endif %}
+        {% if internal_notes %}
+        <div class="notes-list">
+            {% for note in internal_notes %}
+            <div class="note-item">
+                <div class="note-meta">{{ note.author_display_name }} (<code>{{ note.author_discord_user_id }}</code>) · {{ note.created_at }}</div>
+                <div class="note-body">{{ note.note_text }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="tight-muted">No internal notes yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 {% endblock %}

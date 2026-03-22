@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS tickets (
     reopened_by_name VARCHAR(255) NULL,
     deleted_by_id BIGINT NULL,
     deleted_by_name VARCHAR(255) NULL,
+    assignee_discord_user_id BIGINT NULL,
+    assignee_display_name VARCHAR(255) NULL,
+    assigned_at VARCHAR(64) NULL,
+    assigned_by_discord_user_id BIGINT NULL,
+    assigned_by_display_name VARCHAR(255) NULL,
     INDEX idx_status (status),
     INDEX idx_opener_server_status (opener_id, server_label, status),
     INDEX idx_created_at (created_at)
@@ -41,4 +46,14 @@ CREATE TABLE IF NOT EXISTS dashboard_audit_log (
     INDEX idx_dashboard_audit_created_at (created_at),
     INDEX idx_dashboard_audit_actor (actor_discord_user_id),
     INDEX idx_dashboard_audit_event_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_internal_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id BIGINT NOT NULL,
+    author_discord_user_id BIGINT NOT NULL,
+    author_display_name VARCHAR(255) NOT NULL,
+    note_text TEXT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    INDEX idx_ticket_internal_notes_thread_created (thread_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
