@@ -12,6 +12,14 @@ def _delete_after(bot: "SupportTicketBot") -> float:
     return bot.settings.interaction_delete_after_seconds
 
 
+def tag_toggle_custom_id(thread_id: int, tag_id: int) -> str:
+    return f"ticket:tag_toggle:{thread_id}:{tag_id}"
+
+
+def tag_toggle_prefix(thread_id: int) -> str:
+    return f"ticket:tag_toggle:{thread_id}:"
+
+
 def _visible_server_options(bot: "SupportTicketBot", interaction: discord.Interaction) -> list[discord.SelectOption]:
     if interaction.guild is None:
         return []
@@ -89,6 +97,53 @@ class ServerSelectView(discord.ui.View):
     def __init__(self, bot: "SupportTicketBot", options: list[discord.SelectOption]):
         super().__init__(timeout=300)
         self.add_item(ServerSelect(bot, options))
+
+
+class ThreadTagToggleButton(discord.ui.Button):
+    def __init__(self, bot: "SupportTicketBot", *, thread_id: int, tag_id: int, tag_name: str, active: bool, row: int):
+        super().__init__(
+            label=tag_name[:80],
+            style=discord.ButtonStyle.success if active else discord.ButtonStyle.primary,
+            custom_id=tag_toggle_custom_id(thread_id, tag_id),
+            row=row,
+        )
+        self.bot = bot
+        self.thread_id = thread_id
+        self.tag_id = tag_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = self.bot.get_cog("TicketsCog")
+        if cog is None:
+            await interaction.response.send_message(
+                "Ticket system is unavailable.",
+                ephemeral=True,
+                delete_after=_delete_after(self.bot),
+            )
+            return
+        await cog.handle_tag_toggle_button(interaction, self.thread_id, self.tag_id)
+
+
+class ThreadTagButtonsView(discord.ui.View):
+    def __init__(
+        self,
+        bot: "SupportTicketBot",
+        *,
+        thread_id: int,
+        tag_definitions: list[dict],
+        assigned_tag_ids: set[int],
+    ):
+        super().__init__(timeout=None)
+        for index, tag in enumerate(tag_definitions[:25]):
+            self.add_item(
+                ThreadTagToggleButton(
+                    bot,
+                    thread_id=thread_id,
+                    tag_id=int(tag["id"]),
+                    tag_name=str(tag["tag_name"]),
+                    active=int(tag["id"]) in assigned_tag_ids,
+                    row=index // 5,
+                )
+            )
 
 
 class ThreadCloseView(discord.ui.View):

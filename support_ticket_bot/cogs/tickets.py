@@ -11,7 +11,14 @@ from discord.ext import commands, tasks
 
 from support_ticket_bot.transcript import generate_transcripts, store_html_transcript
 from support_ticket_bot.utils import clean_slug, render_template, utc_now_iso
-from support_ticket_bot.views import TicketLogControlsView, TicketPanelView, ThreadCloseView, ThreadReopenView
+from support_ticket_bot.views import (
+    TicketLogControlsView,
+    TicketPanelView,
+    ThreadCloseView,
+    ThreadReopenView,
+    ThreadTagButtonsView,
+    tag_toggle_prefix,
+)
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +46,11 @@ class TicketsCog(commands.Cog):
         self.bot.add_view(TicketPanelView(self.bot))
         for ticket in await self.bot.db.list_open_tickets():
             self.bot.add_view(ThreadCloseView(self.bot, ticket["thread_id"]))
+            await self._register_thread_tag_view(ticket["thread_id"])
             thread = await self._resolve_thread(ticket["thread_id"])
             if thread is not None:
                 await self._set_thread_controls(thread, closed=False)
+                await self._sync_thread_tag_selector(thread)
         for ticket in await self.bot.db.list_closed_tickets():
             self.bot.add_view(ThreadReopenView(self.bot, ticket["thread_id"]))
             thread = await self._resolve_thread(ticket["thread_id"])
@@ -128,6 +137,67 @@ class TicketsCog(commands.Cog):
                     if custom_id in {close_custom_id, reopen_custom_id}:
                         return message
         return None
+
+    async def _find_thread_tag_selector_message(self, thread: discord.Thread, thread_id: int) -> discord.Message | None:
+        custom_id_prefix = tag_toggle_prefix(thread_id)
+        async for message in thread.history(limit=75, oldest_first=True):
+            if self.bot.user is None or message.author.id != self.bot.user.id:
+                continue
+            for row in message.components:
+                for component in row.children:
+                    custom_id = getattr(component, "custom_id", None)
+                    if custom_id and str(custom_id).startswith(custom_id_prefix):
+                        return message
+        return None
+
+    async def _build_thread_tag_selector(self, thread_id: int) -> tuple[discord.Embed, ThreadTagButtonsView] | None:
+        tag_definitions = await self.bot.db.list_tag_definitions()
+        if not tag_definitions:
+            return None
+
+        active_tags = await self.bot.db.list_ticket_tags(thread_id)
+        active_tag_ids = {int(tag["id"]) for tag in active_tags}
+        shown_tags = tag_definitions[:25]
+        selected_names = [str(tag["tag_name"]) for tag in shown_tags if int(tag["id"]) in active_tag_ids]
+        description = "Click a tag button to apply or remove it from this ticket."
+        if selected_names:
+            description += "\n\nSelected: " + ", ".join(selected_names)
+        else:
+            description += "\n\nSelected: None"
+        if len(tag_definitions) > len(shown_tags):
+            description += f"\n\nShowing the first {len(shown_tags)} tags."
+
+        embed = self._embed("Quick Tags", description)
+        view = ThreadTagButtonsView(
+            self.bot,
+            thread_id=thread_id,
+            tag_definitions=shown_tags,
+            assigned_tag_ids=active_tag_ids,
+        )
+        return embed, view
+
+    async def _register_thread_tag_view(self, thread_id: int) -> None:
+        selector = await self._build_thread_tag_selector(thread_id)
+        if selector is None:
+            return
+        _, view = selector
+        self.bot.add_view(view)
+
+    async def _sync_thread_tag_selector(self, thread: discord.Thread) -> None:
+        selector = await self._build_thread_tag_selector(thread.id)
+        if selector is None:
+            return
+
+        embed, view = selector
+        self.bot.add_view(view)
+        message = await self._find_thread_tag_selector_message(thread, thread.id)
+        if message is None:
+            await thread.send(embed=embed, view=view)
+            return
+        try:
+            await message.edit(embed=embed, view=view)
+        except discord.HTTPException:
+            log.warning("Failed to update tag selector for thread_id=%s", thread.id)
 
     async def _set_thread_controls(
         self,
@@ -426,6 +496,7 @@ class TicketsCog(commands.Cog):
         tag: dict[str, Any],
         actor: discord.abc.User,
         source: str,
+        refresh_selector: bool = True,
     ) -> tuple[bool, str]:
         if ticket["status"] != "open":
             return False, "Only open tickets can be updated."
@@ -453,6 +524,8 @@ class TicketsCog(commands.Cog):
             ticket_thread_id=thread.id,
             metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": source},
         )
+        if refresh_selector:
+            await self._sync_thread_tag_selector(thread)
         return True, f'Added tag "{tag["tag_name"]}" to {thread.mention}.'
 
     async def _remove_tag_from_ticket(
@@ -463,6 +536,7 @@ class TicketsCog(commands.Cog):
         tag: dict[str, Any],
         actor: discord.abc.User,
         source: str,
+        refresh_selector: bool = True,
     ) -> tuple[bool, str]:
         if ticket["status"] != "open":
             return False, "Only open tickets can be updated."
@@ -484,6 +558,8 @@ class TicketsCog(commands.Cog):
             ticket_thread_id=thread.id,
             metadata={"tag_id": tag["id"], "tag_name": tag["tag_name"], "source": source},
         )
+        if refresh_selector:
+            await self._sync_thread_tag_selector(thread)
         return True, f'Removed tag "{tag["tag_name"]}" from {thread.mention}.'
 
     async def _tag_name_autocomplete(
@@ -511,6 +587,70 @@ class TicketsCog(commands.Cog):
             app_commands.Choice(name=str(tag["tag_name"]), value=str(tag["tag_name"]))
             for tag in tags[:25]
         ]
+
+    async def handle_tag_toggle_button(self, interaction: discord.Interaction, thread_id: int, tag_id: int) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await self._reply(interaction, "This can only be used inside a server.")
+            return
+
+        thread = await self._resolve_thread(thread_id)
+        if thread is None:
+            await self._reply(interaction, "Could not find that ticket thread.")
+            return
+
+        ticket = await self.bot.db.get_ticket(thread.id)
+        if ticket is None:
+            await self._reply(interaction, "That thread is not tracked as a ticket.")
+            return
+        if ticket["status"] != "open":
+            await self._reply(interaction, "Only open tickets can be updated.")
+            return
+
+        is_opener = ticket.get("opener_id") == interaction.user.id
+        has_staff_access = self._member_has_staff_ticket_access(interaction.user)
+        if not is_opener and not has_staff_access:
+            await self._reply(interaction, "You do not have permission to update tags on this ticket.")
+            return
+
+        tag = next((item for item in await self.bot.db.list_tag_definitions() if int(item["id"]) == tag_id), None)
+        if tag is None:
+            await self._reply(interaction, "That tag is no longer available.")
+            return
+
+        existing_tag_ids = {int(tag_row["id"]) for tag_row in await self.bot.db.list_ticket_tags(thread.id)}
+        if tag_id in existing_tag_ids:
+            changed, message = await self._remove_tag_from_ticket(
+                thread=thread,
+                ticket=ticket,
+                tag=tag,
+                actor=interaction.user,
+                source="ticket_tag_buttons",
+                refresh_selector=False,
+            )
+        else:
+            changed, message = await self._add_tag_to_ticket(
+                thread=thread,
+                ticket=ticket,
+                tag=tag,
+                actor=interaction.user,
+                source="ticket_tag_buttons",
+                refresh_selector=False,
+            )
+        if not changed:
+            await self._reply(interaction, message)
+            return
+
+        selector = await self._build_thread_tag_selector(thread.id)
+        if selector is None:
+            await self._reply(interaction, message)
+            return
+
+        embed, view = selector
+        self.bot.add_view(view)
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except discord.HTTPException:
+            await self._reply(interaction, message)
 
     def _member_has_staff_ticket_access(
         self,
@@ -670,6 +810,7 @@ class TicketsCog(commands.Cog):
         close_view = ThreadCloseView(self.bot, thread.id)
         self.bot.add_view(close_view)
         await thread.send(content=mentions or None, embed=embed, view=close_view)
+        await self._sync_thread_tag_selector(thread)
         await self._send_ticket_created_dm(
             opener_id=interaction.user.id,
             thread=thread,
@@ -825,6 +966,7 @@ class TicketsCog(commands.Cog):
             ),
             color=self.REOPENED_EMBED_COLOR,
         )
+        await self._sync_thread_tag_selector(thread)
         try:
             fetched_thread = await self.bot.fetch_channel(thread.id)
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
@@ -935,6 +1077,8 @@ class TicketsCog(commands.Cog):
                 description=str(notice["description"]),
                 color=int(notice["color"] or self.INFO_EMBED_COLOR),
             )
+            if str(notice["title"]).startswith("Tag "):
+                await self._sync_thread_tag_selector(thread)
             if not sent:
                 log.warning("Failed to dispatch queued dashboard notice notice_id=%s thread_id=%s", notice_id, thread_id)
             await self.bot.db.mark_thread_notice_processed(notice_id=notice_id, processed_at=utc_now_iso())
