@@ -28,9 +28,9 @@
         .open { background:#065f46; }
         .closed { background:#92400e; }
         .deleted { background:#7f1d1d; }
-        .tag-pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#1d4ed8; color:#eff6ff; margin:2px 6px 2px 0; font-size:0.88rem; }
+        .tag-pill { display:inline-flex; align-items:center; max-width:100%; padding:4px 10px; border-radius:999px; background:var(--tag-bg, #1d4ed8); color:var(--tag-fg, #eff6ff); border:1px solid var(--tag-border, transparent); margin:2px 6px 2px 0; font-size:0.88rem; }
         .tag-cluster { display:flex; flex-wrap:wrap; gap:6px; align-items:flex-start; }
-        .tag-cluster .tag-pill { margin:0; padding:3px 9px; font-size:0.8rem; line-height:1.15; background:#1e40af; box-shadow:inset 0 0 0 1px rgba(191, 219, 254, 0.12); }
+        .tag-cluster .tag-pill { margin:0; max-width:150px; padding:3px 9px; font-size:0.78rem; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:inset 0 0 0 1px rgba(255, 255, 255, 0.04); }
         .filters a { margin-right:12px; }
         .login-box { max-width:420px; margin:80px auto; background:#1f2937; padding:24px; border-radius:12px; }
         input, select { width:100%; padding:10px; margin:8px 0 16px; border-radius:8px; border:1px solid #4b5563; background:#111827; color:#f3f4f6; }
@@ -86,6 +86,13 @@
         .inline-action-form { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
         .inline-action-form select { margin:0; max-width:280px; }
         .inline-action-form button { width:auto; }
+        .tag-create-form { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+        .tag-create-form > div { display:grid; gap:6px; }
+        .tag-create-form label { color:#9ca3af; font-size:0.88rem; }
+        .tag-create-form input[type="text"] { flex:1 1 260px; max-width:360px; margin:0; }
+        .tag-create-form input[type="color"] { width:56px; min-width:56px; height:42px; padding:4px; margin:0; }
+        .tag-create-form select { width:auto; min-width:170px; margin:0; }
+        .tag-create-form button { width:auto; }
         .admin-tabs-shell { display:grid; gap:16px; }
         .admin-tabs { display:flex; gap:10px; flex-wrap:wrap; padding:8px; border-radius:12px; background:#1f2937; }
         .admin-tab-button { width:auto; padding:10px 14px; border:1px solid #374151; border-radius:10px; background:#111827; color:#d1d5db; font-weight:600; }
@@ -103,7 +110,12 @@
         .tag-view .tag-row-actions { justify-content:flex-end; }
         .tag-row-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .tag-edit-form { display:grid; gap:12px; }
-        .tag-edit-form input { width:100%; max-width:420px; margin:0; }
+        .tag-edit-fields { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+        .tag-edit-fields > div { display:grid; gap:6px; }
+        .tag-edit-fields label { color:#9ca3af; font-size:0.88rem; }
+        .tag-edit-fields input[type="text"] { width:100%; flex:1 1 260px; max-width:360px; margin:0; }
+        .tag-edit-fields input[type="color"] { width:56px; min-width:56px; height:42px; padding:4px; margin:0; }
+        .tag-edit-fields select { width:auto; min-width:170px; margin:0; }
         .tag-edit-form button { width:auto; margin:0; }
         .tag-delete-form { margin:0; }
         .tag-delete-form button { width:auto; }

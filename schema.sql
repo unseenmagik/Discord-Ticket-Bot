@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS ticket_tags (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     tag_key VARCHAR(100) NOT NULL UNIQUE,
     tag_name VARCHAR(100) NOT NULL,
+    tag_color VARCHAR(7) NOT NULL DEFAULT '#2563eb',
+    discord_button_style VARCHAR(16) NOT NULL DEFAULT 'primary',
     created_at VARCHAR(64) NOT NULL,
     created_by_discord_user_id BIGINT NULL,
     created_by_display_name VARCHAR(255) NULL,

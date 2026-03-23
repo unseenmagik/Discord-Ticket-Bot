@@ -17,7 +17,7 @@
         <div class="value">
             {% if ticket.tags %}
                 {% for tag in ticket.tags %}
-                <span class="tag-pill">{{ tag.tag_name }}</span>
+                <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
                 {% endfor %}
             {% else %}
             —
@@ -112,7 +112,7 @@
             {% for tag in ticket.tags %}
             <div class="tag-row">
                 <div>
-                    <span class="tag-pill">{{ tag.tag_name }}</span>
+                    <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
                     <div class="tag-meta">Added {{ tag.assigned_at }}{% if tag.assigned_by_display_name %} by {{ tag.assigned_by_display_name }}{% endif %}</div>
                 </div>
                 <form method="post" action="/tickets/{{ ticket.thread_id }}/tags/{{ tag.id }}/remove">

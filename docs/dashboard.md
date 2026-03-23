@@ -41,6 +41,8 @@ That includes:
 - assigned-user thread membership sync
 - tag add and remove notices
 
+The in-thread Quick Tags buttons can also hide specific managed tags using `[tickets] hidden_thread_tag_names` in `config.ini`, while still leaving those tags available in slash commands and the dashboard.
+
 ![Ticket detail view](images/dashboard-ticket-detail.png)
 
 ## Admin Control Panel
@@ -52,14 +54,18 @@ The Admin page is organized into tabs:
 - Tags
 - Ticket Setup Panel
 - Ticket Welcome Message
+- Welcome Tags
 
 Admins can:
 
 - review admin user IDs and role-based queue access
 - review recent dashboard audit events
 - create, edit, and delete managed tags
+- choose dashboard pill colors for managed tags
+- choose which Discord button style inactive quick-tag buttons should use
 - update the public ticket panel message
 - update the ticket welcome message sent into new threads
+- update the quick-tag selector message shown in new ticket threads
 
 ![Admin Control Panel](images/dashboard-admin-control-panel.png)
 

@@ -20,6 +20,7 @@
         <button class="admin-tab-button" type="button" data-tab-target="tags">Tags</button>
         <button class="admin-tab-button" type="button" data-tab-target="ticket-setup-panel">Ticket Setup Panel</button>
         <button class="admin-tab-button" type="button" data-tab-target="ticket-welcome-message">Ticket Welcome Message</button>
+        <button class="admin-tab-button" type="button" data-tab-target="welcome-tags">Welcome Tags</button>
     </div>
 
     <div id="managed-access" class="admin-tab-panel is-active">
@@ -174,8 +175,20 @@
                 <p class="muted">Create reusable ticket tags here. Staff can apply these tags to tickets from Discord or the dashboard.</p>
             </div>
 
-            <form class="inline-action-form" method="post" action="/admin/tags">
+            <form class="tag-create-form" method="post" action="/admin/tags">
                 <input name="tag_name" type="text" placeholder="e.g. Billing, Escalated, Waiting on user" required>
+                <div>
+                    <label for="tag_color_create">Dashboard color</label>
+                    <input id="tag_color_create" name="tag_color" type="color" value="#2563eb" aria-label="Dashboard tag color">
+                </div>
+                <div>
+                    <label for="discord_button_style_create">Discord button style</label>
+                    <select id="discord_button_style_create" name="discord_button_style" aria-label="Discord button style">
+                        {% for style_name in discord_button_styles %}
+                        <option value="{{ style_name }}" {% if style_name == 'primary' %}selected{% endif %}>{{ style_name|replace('_', ' ')|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <button type="submit">Create tag</button>
             </form>
 
@@ -185,8 +198,9 @@
                 <div class="tag-row">
                     <div id="tag-view-{{ tag.id }}" class="tag-view">
                         <div class="tag-row-main">
-                            <span class="tag-pill">{{ tag.tag_name }}</span>
+                            <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
                             <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+                            <div class="tag-meta">Discord button style: {{ (tag.discord_button_style or 'primary')|replace('_', ' ')|title }}</div>
                         </div>
                         <div class="tag-row-actions">
                             <button
@@ -203,11 +217,28 @@
                     </div>
                     <div id="tag-edit-{{ tag.id }}" class="tag-edit is-hidden">
                         <div class="tag-row-main">
-                            <span class="tag-pill">{{ tag.tag_name }}</span>
+                            <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
                             <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
                         </div>
                         <form class="tag-edit-form" method="post" action="/admin/tags/{{ tag.id }}/edit">
-                            <input name="tag_name" type="text" value="{{ tag.tag_name }}" required>
+                            <div class="tag-edit-fields">
+                                <div>
+                                    <label for="tag_name_{{ tag.id }}">Tag name</label>
+                                    <input id="tag_name_{{ tag.id }}" name="tag_name" type="text" value="{{ tag.tag_name }}" required>
+                                </div>
+                                <div>
+                                    <label for="tag_color_{{ tag.id }}">Dashboard color</label>
+                                    <input id="tag_color_{{ tag.id }}" name="tag_color" type="color" value="{{ tag.tag_color or '#2563eb' }}" aria-label="Dashboard tag color">
+                                </div>
+                                <div>
+                                    <label for="discord_button_style_{{ tag.id }}">Discord button style</label>
+                                    <select id="discord_button_style_{{ tag.id }}" name="discord_button_style" aria-label="Discord button style">
+                                        {% for style_name in discord_button_styles %}
+                                        <option value="{{ style_name }}" {% if (tag.discord_button_style or 'primary') == style_name %}selected{% endif %}>{{ style_name|replace('_', ' ')|title }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
                             <div class="tag-row-actions">
                                 <button
                                     class="button-secondary"
@@ -239,6 +270,8 @@
             <form class="admin-form-stack" method="post" action="/admin/messages">
                 <input name="thread_embed_title" type="hidden" value="{{ templates.thread_embed_title }}">
                 <input name="thread_embed_description" type="hidden" value="{{ templates.thread_embed_description }}">
+                <input name="thread_tags_title" type="hidden" value="{{ templates.thread_tags_title }}">
+                <input name="thread_tags_description" type="hidden" value="{{ templates.thread_tags_description }}">
 
                 <label for="panel_title">Panel title</label>
                 <input id="panel_title" name="panel_title" type="text" value="{{ templates.panel_title }}" required>
@@ -264,6 +297,8 @@
             <form class="admin-form-stack" method="post" action="/admin/messages">
                 <input name="panel_title" type="hidden" value="{{ templates.panel_title }}">
                 <input name="panel_description" type="hidden" value="{{ templates.panel_description }}">
+                <input name="thread_tags_title" type="hidden" value="{{ templates.thread_tags_title }}">
+                <input name="thread_tags_description" type="hidden" value="{{ templates.thread_tags_description }}">
 
                 <label for="thread_embed_title">Thread message title</label>
                 <input id="thread_embed_title" name="thread_embed_title" type="text" value="{{ templates.thread_embed_title }}" required>
@@ -274,6 +309,33 @@
 
                 <div class="button-row">
                     <button type="submit">Save welcome message</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="welcome-tags" class="admin-tab-panel">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Welcome Tags</h2>
+                <p class="muted">Configure the tag selector message that appears in the ticket thread after the welcome message.</p>
+            </div>
+
+            <form class="admin-form-stack" method="post" action="/admin/messages">
+                <input name="panel_title" type="hidden" value="{{ templates.panel_title }}">
+                <input name="panel_description" type="hidden" value="{{ templates.panel_description }}">
+                <input name="thread_embed_title" type="hidden" value="{{ templates.thread_embed_title }}">
+                <input name="thread_embed_description" type="hidden" value="{{ templates.thread_embed_description }}">
+
+                <label for="thread_tags_title">Tag message title</label>
+                <input id="thread_tags_title" name="thread_tags_title" type="text" value="{{ templates.thread_tags_title }}" required>
+
+                <label for="thread_tags_description">Tag message description</label>
+                <textarea id="thread_tags_description" name="thread_tags_description" required>{{ templates.thread_tags_description }}</textarea>
+                <div class="help">The bot will still append the current selected tags and tag count details below this message automatically.</div>
+
+                <div class="button-row">
+                    <button type="submit">Save tag welcome message</button>
                 </div>
             </form>
         </div>
