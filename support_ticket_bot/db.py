@@ -1058,6 +1058,8 @@ class DashboardDatabase:
                         tt.id,
                         tt.tag_name,
                         tt.tag_key,
+                        tt.tag_color,
+                        tt.discord_button_style,
                         tta.assigned_at,
                         tta.assigned_by_discord_user_id,
                         tta.assigned_by_display_name
