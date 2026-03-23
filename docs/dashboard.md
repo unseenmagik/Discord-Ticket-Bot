@@ -11,6 +11,10 @@ The dashboard provides:
 - admin controls
 - Discord OAuth login
 
+![Dashboard login](images/dashboard-login.png)
+
+![Dashboard overview](images/dashboard-overview.png)
+
 ## Access model
 
 Dashboard viewers can see:
@@ -37,6 +41,8 @@ That includes:
 - assigned-user thread membership sync
 - tag add and remove notices
 
+![Ticket detail view](images/dashboard-ticket-detail.png)
+
 ## Admin Control Panel
 
 The Admin page is organized into tabs:
@@ -54,6 +60,14 @@ Admins can:
 - create, edit, and delete managed tags
 - update the public ticket panel message
 - update the ticket welcome message sent into new threads
+
+![Admin Control Panel](images/dashboard-admin-control-panel.png)
+
+## Stats
+
+The stats page gives a higher-level operational view of ticket activity across the tracked queue.
+
+![Dashboard stats](images/dashboard-stats.png)
 
 ## Placeholders
 
@@ -91,6 +105,12 @@ Example panel description:
 Welcome to {guild_name}.
 Press **Create Ticket** below to open a support request in {panel_channel_mention}.
 ```
+
+## Transcripts
+
+HTML transcripts use the same visual language as the dashboard and include ticket metadata plus the rendered conversation history.
+
+![Dashboard transcript](images/dashboard-transcript.png)
 
 ## Notes
 

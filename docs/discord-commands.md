@@ -1,5 +1,9 @@
 # Discord Commands
 
+The ticket workflow also lives directly inside Discord, including thread controls, assignment, managed tags, and ticket status actions.
+
+![Discord ticket thread](images/discord-ticket-thread.png)
+
 ## Ticket setup and lifecycle
 
 - `/setup_tickets`

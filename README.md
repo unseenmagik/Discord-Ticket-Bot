@@ -2,6 +2,8 @@
 
 A Discord support ticket bot with a FastAPI dashboard, MariaDB/MySQL storage, HTML/TXT transcripts, Discord OAuth login, managed tags, staff assignment, and dashboard-to-Discord thread sync.
 
+![Dashboard overview](docs/images/dashboard-overview.png)
+
 ## Highlights
 
 - Ticket creation from a pinned Discord panel
@@ -24,7 +26,7 @@ pip install -r requirements.txt
 cp config.ini.example config.ini
 ```
 
-Create your MariaDB/MySQL database, import [schema.sql](/Users/unseenmagik/Documents/GitHub/Discord Ticket Bot/schema.sql), update `config.ini`, then start:
+Create your MariaDB/MySQL database, import [schema.sql](schema.sql), update `config.ini`, then start:
 
 ```bash
 python bot.py
