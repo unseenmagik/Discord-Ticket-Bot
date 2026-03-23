@@ -52,7 +52,7 @@
                 {% if ticket.tags %}
                     <div class="tag-cluster">
                     {% for tag in ticket.tags %}
-                    <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
+                    <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}" title="{{ tag.tag_name }}">{{ tag.tag_name }}</span>
                     {% endfor %}
                     </div>
                 {% else %}
