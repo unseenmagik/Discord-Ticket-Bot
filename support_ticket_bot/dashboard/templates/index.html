@@ -36,6 +36,9 @@
             {% endif %}
             <th>Created</th>
             <th>Details</th>
+            {% if show_staff_ticket_fields %}
+            <th>Remove</th>
+            {% endif %}
         </tr>
     </thead>
     <tbody>
@@ -61,15 +64,15 @@
             {% endif %}
             <td>{{ ticket.created_at }}</td>
             <td>
-                <div class="table-actions">
-                    <a href="/tickets/{{ ticket.thread_id }}">Open</a>
-                    {% if show_staff_ticket_fields %}
-                    <form method="post" action="/tickets/{{ ticket.thread_id }}/remove" onsubmit="return confirm('Remove this ticket from the dashboard database? This does not delete the Discord thread.');">
-                        <button class="button-danger" type="submit">Remove</button>
-                    </form>
-                    {% endif %}
-                </div>
+                <a href="/tickets/{{ ticket.thread_id }}">Open</a>
             </td>
+            {% if show_staff_ticket_fields %}
+            <td>
+                <form method="post" action="/tickets/{{ ticket.thread_id }}/remove" onsubmit="return confirm('Remove this ticket from the dashboard database? This does not delete the Discord thread.');">
+                    <button class="button-danger" type="submit">Remove</button>
+                </form>
+            </td>
+            {% endif %}
         </tr>
         {% endfor %}
     </tbody>
