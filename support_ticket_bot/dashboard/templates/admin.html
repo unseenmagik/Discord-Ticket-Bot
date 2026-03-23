@@ -175,8 +175,20 @@
                 <p class="muted">Create reusable ticket tags here. Staff can apply these tags to tickets from Discord or the dashboard.</p>
             </div>
 
-            <form class="inline-action-form" method="post" action="/admin/tags">
+            <form class="tag-create-form" method="post" action="/admin/tags">
                 <input name="tag_name" type="text" placeholder="e.g. Billing, Escalated, Waiting on user" required>
+                <div>
+                    <label for="tag_color_create">Dashboard color</label>
+                    <input id="tag_color_create" name="tag_color" type="color" value="#2563eb" aria-label="Dashboard tag color">
+                </div>
+                <div>
+                    <label for="discord_button_style_create">Discord button style</label>
+                    <select id="discord_button_style_create" name="discord_button_style" aria-label="Discord button style">
+                        {% for style_name in discord_button_styles %}
+                        <option value="{{ style_name }}" {% if style_name == 'primary' %}selected{% endif %}>{{ style_name|replace('_', ' ')|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <button type="submit">Create tag</button>
             </form>
 
@@ -186,8 +198,9 @@
                 <div class="tag-row">
                     <div id="tag-view-{{ tag.id }}" class="tag-view">
                         <div class="tag-row-main">
-                            <span class="tag-pill">{{ tag.tag_name }}</span>
+                            <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
                             <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
+                            <div class="tag-meta">Discord button style: {{ (tag.discord_button_style or 'primary')|replace('_', ' ')|title }}</div>
                         </div>
                         <div class="tag-row-actions">
                             <button
@@ -204,11 +217,28 @@
                     </div>
                     <div id="tag-edit-{{ tag.id }}" class="tag-edit is-hidden">
                         <div class="tag-row-main">
-                            <span class="tag-pill">{{ tag.tag_name }}</span>
+                            <span class="tag-pill" style="{{ tag_pill_style(tag.tag_color) }}">{{ tag.tag_name }}</span>
                             <div class="tag-meta">Created {{ tag.created_at }}{% if tag.created_by_display_name %} by {{ tag.created_by_display_name }}{% endif %}</div>
                         </div>
                         <form class="tag-edit-form" method="post" action="/admin/tags/{{ tag.id }}/edit">
-                            <input name="tag_name" type="text" value="{{ tag.tag_name }}" required>
+                            <div class="tag-edit-fields">
+                                <div>
+                                    <label for="tag_name_{{ tag.id }}">Tag name</label>
+                                    <input id="tag_name_{{ tag.id }}" name="tag_name" type="text" value="{{ tag.tag_name }}" required>
+                                </div>
+                                <div>
+                                    <label for="tag_color_{{ tag.id }}">Dashboard color</label>
+                                    <input id="tag_color_{{ tag.id }}" name="tag_color" type="color" value="{{ tag.tag_color or '#2563eb' }}" aria-label="Dashboard tag color">
+                                </div>
+                                <div>
+                                    <label for="discord_button_style_{{ tag.id }}">Discord button style</label>
+                                    <select id="discord_button_style_{{ tag.id }}" name="discord_button_style" aria-label="Discord button style">
+                                        {% for style_name in discord_button_styles %}
+                                        <option value="{{ style_name }}" {% if (tag.discord_button_style or 'primary') == style_name %}selected{% endif %}>{{ style_name|replace('_', ' ')|title }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
                             <div class="tag-row-actions">
                                 <button
                                     class="button-secondary"

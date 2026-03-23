@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 import json
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 import aiomysql
@@ -51,6 +52,8 @@ CREATE TABLE IF NOT EXISTS ticket_tags (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     tag_key VARCHAR(100) NOT NULL UNIQUE,
     tag_name VARCHAR(100) NOT NULL,
+    tag_color VARCHAR(7) NOT NULL DEFAULT '#2563eb',
+    discord_button_style VARCHAR(16) NOT NULL DEFAULT 'primary',
     created_at VARCHAR(64) NOT NULL,
     created_by_discord_user_id BIGINT NULL,
     created_by_display_name VARCHAR(255) NULL,
@@ -119,6 +122,16 @@ CREATE TABLE IF NOT EXISTS guild_role_directory (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 GUILD_ROLE_DIRECTORY_TABLE_NAME = "guild_role_directory"
+DEFAULT_TAG_COLOR = "#2563eb"
+DEFAULT_TAG_DISCORD_STYLE = "primary"
+ALLOWED_TAG_DISCORD_STYLES = {"primary", "secondary", "success", "danger"}
+TAG_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
+    ("tag_color", f"ALTER TABLE ticket_tags ADD COLUMN tag_color VARCHAR(7) NOT NULL DEFAULT '{DEFAULT_TAG_COLOR}'"),
+    (
+        "discord_button_style",
+        "ALTER TABLE ticket_tags ADD COLUMN discord_button_style VARCHAR(16) NOT NULL DEFAULT 'primary'",
+    ),
+)
 TICKET_SCHEMA_UPDATES: tuple[tuple[str, str], ...] = (
     ("assignee_discord_user_id", "ALTER TABLE tickets ADD COLUMN assignee_discord_user_id BIGINT NULL"),
     ("assignee_display_name", "ALTER TABLE tickets ADD COLUMN assignee_display_name VARCHAR(255) NULL"),
@@ -140,6 +153,18 @@ def _clean_tag_name(value: str) -> str:
 
 def _tag_key(value: str) -> str:
     return _clean_tag_name(value).casefold()
+
+
+def _clean_tag_color(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", raw):
+        return raw.lower()
+    return DEFAULT_TAG_COLOR
+
+
+def _clean_tag_discord_style(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in ALLOWED_TAG_DISCORD_STYLES else DEFAULT_TAG_DISCORD_STYLE
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -266,6 +291,7 @@ class TicketDatabase:
             await self.execute(TAG_DEFINITIONS_TABLE_SQL)
         if not await self._table_exists(TAG_ASSIGNMENTS_TABLE_NAME):
             await self.execute(TAG_ASSIGNMENTS_TABLE_SQL)
+        await self._ensure_tag_schema_updates()
         if not await self._table_exists(THREAD_NOTICE_QUEUE_TABLE_NAME):
             await self.execute(THREAD_NOTICE_QUEUE_TABLE_SQL)
         if not await self._table_exists(THREAD_MEMBER_SYNC_QUEUE_TABLE_NAME):
@@ -332,6 +358,11 @@ class TicketDatabase:
     async def _ensure_ticket_schema_updates(self) -> None:
         for column_name, alter_sql in TICKET_SCHEMA_UPDATES:
             if not await self._column_exists("tickets", column_name):
+                await self.execute(alter_sql)
+
+    async def _ensure_tag_schema_updates(self) -> None:
+        for column_name, alter_sql in TAG_SCHEMA_UPDATES:
+            if not await self._column_exists(TAG_DEFINITIONS_TABLE_NAME, column_name):
                 await self.execute(alter_sql)
 
     async def create_ticket(
@@ -681,39 +712,64 @@ class TicketDatabase:
         self,
         *,
         tag_name: str,
+        tag_color: str | None = None,
+        discord_button_style: str | None = None,
         created_by_discord_user_id: int | None,
         created_by_display_name: str | None,
         created_at: str,
     ) -> dict[str, Any]:
         clean_name = _clean_tag_name(tag_name)
         key = _tag_key(clean_name)
+        clean_color = _clean_tag_color(tag_color)
+        clean_style = _clean_tag_discord_style(discord_button_style)
         await self.execute(
             """
             INSERT INTO ticket_tags (
                 tag_key,
                 tag_name,
+                tag_color,
+                discord_button_style,
                 created_at,
                 created_by_discord_user_id,
                 created_by_display_name
-            ) VALUES (%s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (key, clean_name, created_at, created_by_discord_user_id, created_by_display_name),
+            (
+                key,
+                clean_name,
+                clean_color,
+                clean_style,
+                created_at,
+                created_by_discord_user_id,
+                created_by_display_name,
+            ),
         )
         created = await self.get_tag_definition_by_name(clean_name)
         assert created is not None
         return created
 
-    async def update_tag_definition(self, *, tag_id: int, tag_name: str) -> dict[str, Any] | None:
+    async def update_tag_definition(
+        self,
+        *,
+        tag_id: int,
+        tag_name: str,
+        tag_color: str | None = None,
+        discord_button_style: str | None = None,
+    ) -> dict[str, Any] | None:
         clean_name = _clean_tag_name(tag_name)
         key = _tag_key(clean_name)
+        clean_color = _clean_tag_color(tag_color)
+        clean_style = _clean_tag_discord_style(discord_button_style)
         await self.execute(
             """
             UPDATE ticket_tags
             SET tag_key = %s,
-                tag_name = %s
+                tag_name = %s,
+                tag_color = %s,
+                discord_button_style = %s
             WHERE id = %s
             """,
-            (key, clean_name, tag_id),
+            (key, clean_name, clean_color, clean_style, tag_id),
         )
         return await self.fetchone("SELECT * FROM ticket_tags WHERE id = %s LIMIT 1", (tag_id,))
 
@@ -841,6 +897,18 @@ class DashboardDatabase:
                     cur.execute(TAG_DEFINITIONS_TABLE_SQL)
                 if not self._table_exists(TAG_ASSIGNMENTS_TABLE_NAME):
                     cur.execute(TAG_ASSIGNMENTS_TABLE_SQL)
+                for column_name, alter_sql in TAG_SCHEMA_UPDATES:
+                    cur.execute(
+                        """
+                        SELECT 1 AS present
+                        FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                        LIMIT 1
+                        """,
+                        (self.settings.db_name, TAG_DEFINITIONS_TABLE_NAME, column_name),
+                    )
+                    if cur.fetchone() is None:
+                        cur.execute(alter_sql)
 
     def ensure_thread_notice_queue_table(self) -> None:
         if self._table_exists(THREAD_NOTICE_QUEUE_TABLE_NAME):
@@ -1300,6 +1368,8 @@ class DashboardDatabase:
         self,
         *,
         tag_name: str,
+        tag_color: str | None = None,
+        discord_button_style: str | None = None,
         created_by_discord_user_id: int | None,
         created_by_display_name: str | None,
         created_at: str,
@@ -1307,6 +1377,8 @@ class DashboardDatabase:
         self.ensure_tag_tables()
         clean_name = _clean_tag_name(tag_name)
         key = _tag_key(clean_name)
+        clean_color = _clean_tag_color(tag_color)
+        clean_style = _clean_tag_discord_style(discord_button_style)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1314,31 +1386,52 @@ class DashboardDatabase:
                     INSERT INTO ticket_tags (
                         tag_key,
                         tag_name,
+                        tag_color,
+                        discord_button_style,
                         created_at,
                         created_by_discord_user_id,
                         created_by_display_name
-                    ) VALUES (%s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (key, clean_name, created_at, created_by_discord_user_id, created_by_display_name),
+                    (
+                        key,
+                        clean_name,
+                        clean_color,
+                        clean_style,
+                        created_at,
+                        created_by_discord_user_id,
+                        created_by_display_name,
+                    ),
                 )
         created = self.get_tag_definition_by_name(clean_name)
         assert created is not None
         return created
 
-    def update_tag_definition(self, *, tag_id: int, tag_name: str) -> dict[str, Any] | None:
+    def update_tag_definition(
+        self,
+        *,
+        tag_id: int,
+        tag_name: str,
+        tag_color: str | None = None,
+        discord_button_style: str | None = None,
+    ) -> dict[str, Any] | None:
         self.ensure_tag_tables()
         clean_name = _clean_tag_name(tag_name)
         key = _tag_key(clean_name)
+        clean_color = _clean_tag_color(tag_color)
+        clean_style = _clean_tag_discord_style(discord_button_style)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     UPDATE ticket_tags
                     SET tag_key = %s,
-                        tag_name = %s
+                        tag_name = %s,
+                        tag_color = %s,
+                        discord_button_style = %s
                     WHERE id = %s
                     """,
-                    (key, clean_name, tag_id),
+                    (key, clean_name, clean_color, clean_style, tag_id),
                 )
                 cur.execute("SELECT * FROM ticket_tags WHERE id = %s LIMIT 1", (tag_id,))
                 return cur.fetchone()

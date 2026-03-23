@@ -48,6 +48,8 @@ Key options:
 
 The tag selector message text itself is managed from the dashboard Admin page under `Welcome Tags`.
 
+Managed tag colors and Discord quick-tag button styles are configured from the dashboard Admin page under `Tags`.
+
 ## Transcript settings
 
 In `[logs]`:

@@ -20,6 +20,16 @@ def tag_toggle_prefix(thread_id: int) -> str:
     return f"ticket:tag_toggle:{thread_id}:"
 
 
+def _discord_button_style(name: str) -> discord.ButtonStyle:
+    style_map = {
+        "primary": discord.ButtonStyle.primary,
+        "secondary": discord.ButtonStyle.secondary,
+        "success": discord.ButtonStyle.success,
+        "danger": discord.ButtonStyle.danger,
+    }
+    return style_map.get(str(name).lower(), discord.ButtonStyle.primary)
+
+
 def _visible_server_options(bot: "SupportTicketBot", interaction: discord.Interaction) -> list[discord.SelectOption]:
     if interaction.guild is None:
         return []
@@ -100,10 +110,20 @@ class ServerSelectView(discord.ui.View):
 
 
 class ThreadTagToggleButton(discord.ui.Button):
-    def __init__(self, bot: "SupportTicketBot", *, thread_id: int, tag_id: int, tag_name: str, active: bool, row: int):
+    def __init__(
+        self,
+        bot: "SupportTicketBot",
+        *,
+        thread_id: int,
+        tag_id: int,
+        tag_name: str,
+        inactive_style: str,
+        active: bool,
+        row: int,
+    ):
         super().__init__(
             label=tag_name[:80],
-            style=discord.ButtonStyle.success if active else discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.success if active else _discord_button_style(inactive_style),
             custom_id=tag_toggle_custom_id(thread_id, tag_id),
             row=row,
         )
@@ -140,6 +160,7 @@ class ThreadTagButtonsView(discord.ui.View):
                     thread_id=thread_id,
                     tag_id=int(tag["id"]),
                     tag_name=str(tag["tag_name"]),
+                    inactive_style=str(tag.get("discord_button_style") or "primary"),
                     active=int(tag["id"]) in assigned_tag_ids,
                     row=index // 5,
                 )

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 import logging
 from pathlib import Path
+import re
 from urllib.parse import quote_plus, urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
@@ -30,7 +31,12 @@ from support_ticket_bot.dashboard.auth import (
     load_viewer_from_cookie,
     validate_state_cookie,
 )
-from support_ticket_bot.db import DashboardDatabase
+from support_ticket_bot.db import (
+    ALLOWED_TAG_DISCORD_STYLES,
+    DEFAULT_TAG_COLOR,
+    DEFAULT_TAG_DISCORD_STYLE,
+    DashboardDatabase,
+)
 from support_ticket_bot.transcript import TRANSCRIPTS_DIR
 from support_ticket_bot.utils import DEFAULT_MESSAGE_TEMPLATES, utc_now_iso
 
@@ -57,8 +63,38 @@ def _template_context(request: Request, viewer: DashboardViewer | None, **extra:
         "viewer": viewer,
         "user": viewer.display_name if viewer else None,
         "is_admin": viewer.is_admin if viewer else False,
+        "tag_pill_style": _tag_pill_style,
+        "discord_button_styles": sorted(ALLOWED_TAG_DISCORD_STYLES),
         **extra,
     }
+
+
+def _normalize_tag_color(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", raw):
+        return raw.lower()
+    return DEFAULT_TAG_COLOR
+
+
+def _normalize_tag_discord_style(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in ALLOWED_TAG_DISCORD_STYLES else DEFAULT_TAG_DISCORD_STYLE
+
+
+def _tag_text_color(hex_color: str) -> str:
+    normalized = _normalize_tag_color(hex_color)
+    red = int(normalized[1:3], 16)
+    green = int(normalized[3:5], 16)
+    blue = int(normalized[5:7], 16)
+    luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255
+    return "#111827" if luminance > 0.64 else "#eff6ff"
+
+
+def _tag_pill_style(hex_color: str | None) -> str:
+    color = _normalize_tag_color(hex_color)
+    text_color = _tag_text_color(color)
+    border = "rgba(17, 24, 39, 0.18)" if text_color == "#111827" else "rgba(255, 255, 255, 0.12)"
+    return f"--tag-bg:{color}; --tag-fg:{text_color}; --tag-border:{border};"
 
 
 def require_viewer(request: Request) -> DashboardViewer:
@@ -586,12 +622,16 @@ def create_app() -> FastAPI:
     async def create_admin_tag(
         request: Request,
         tag_name: str = Form(...),
+        tag_color: str = Form(DEFAULT_TAG_COLOR),
+        discord_button_style: str = Form(DEFAULT_TAG_DISCORD_STYLE),
         viewer: DashboardViewer = Depends(require_admin),
     ):
         db: DashboardDatabase = request.app.state.db
         cleaned_name = " ".join(tag_name.strip().split())
         if not cleaned_name:
             return RedirectResponse(url=_admin_url(error="Tag name cannot be empty."), status_code=303)
+        cleaned_color = _normalize_tag_color(tag_color)
+        cleaned_style = _normalize_tag_discord_style(discord_button_style)
 
         existing = db.get_tag_definition_by_name(cleaned_name)
         if existing is not None:
@@ -602,6 +642,8 @@ def create_app() -> FastAPI:
 
         created = db.create_tag_definition(
             tag_name=cleaned_name,
+            tag_color=cleaned_color,
+            discord_button_style=cleaned_style,
             created_by_discord_user_id=viewer.discord_user_id,
             created_by_display_name=viewer.display_name,
             created_at=utc_now_iso(),
@@ -610,7 +652,12 @@ def create_app() -> FastAPI:
             request,
             viewer=viewer,
             event_type="tag_created",
-            metadata={"tag_id": created["id"], "tag_name": created["tag_name"]},
+            metadata={
+                "tag_id": created["id"],
+                "tag_name": created["tag_name"],
+                "tag_color": created.get("tag_color"),
+                "discord_button_style": created.get("discord_button_style"),
+            },
         )
         return RedirectResponse(url=_admin_url(notice=f'Tag "{created["tag_name"]}" created.'), status_code=303)
 
@@ -619,6 +666,8 @@ def create_app() -> FastAPI:
         tag_id: int,
         request: Request,
         tag_name: str = Form(...),
+        tag_color: str = Form(DEFAULT_TAG_COLOR),
+        discord_button_style: str = Form(DEFAULT_TAG_DISCORD_STYLE),
         viewer: DashboardViewer = Depends(require_admin),
     ):
         db: DashboardDatabase = request.app.state.db
@@ -629,6 +678,8 @@ def create_app() -> FastAPI:
         cleaned_name = " ".join(tag_name.strip().split())
         if not cleaned_name:
             return RedirectResponse(url=_admin_url(error="Tag name cannot be empty."), status_code=303)
+        cleaned_color = _normalize_tag_color(tag_color)
+        cleaned_style = _normalize_tag_discord_style(discord_button_style)
 
         existing = db.get_tag_definition_by_name(cleaned_name)
         if existing is not None and existing["id"] != tag_id:
@@ -637,7 +688,12 @@ def create_app() -> FastAPI:
                 status_code=303,
             )
 
-        updated = db.update_tag_definition(tag_id=tag_id, tag_name=cleaned_name)
+        updated = db.update_tag_definition(
+            tag_id=tag_id,
+            tag_name=cleaned_name,
+            tag_color=cleaned_color,
+            discord_button_style=cleaned_style,
+        )
         if updated is None:
             return RedirectResponse(url=_admin_url(error="Tag could not be updated."), status_code=303)
 
@@ -649,6 +705,10 @@ def create_app() -> FastAPI:
                 "tag_id": tag_id,
                 "old_tag_name": tag["tag_name"],
                 "new_tag_name": updated["tag_name"],
+                "old_tag_color": tag.get("tag_color"),
+                "new_tag_color": updated.get("tag_color"),
+                "old_discord_button_style": tag.get("discord_button_style"),
+                "new_discord_button_style": updated.get("discord_button_style"),
             },
         )
         return RedirectResponse(

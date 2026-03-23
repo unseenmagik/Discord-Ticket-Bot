@@ -61,6 +61,8 @@ Admins can:
 - review admin user IDs and role-based queue access
 - review recent dashboard audit events
 - create, edit, and delete managed tags
+- choose dashboard pill colors for managed tags
+- choose which Discord button style inactive quick-tag buttons should use
 - update the public ticket panel message
 - update the ticket welcome message sent into new threads
 - update the quick-tag selector message shown in new ticket threads
