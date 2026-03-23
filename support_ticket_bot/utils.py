@@ -15,6 +15,8 @@ DEFAULT_MESSAGE_TEMPLATES = {
         "**Ticket ID:** `{thread_id}`\n\n"
         "Use the button below to close this ticket when it is resolved."
     ),
+    "thread_tags_title": "Quick Tags",
+    "thread_tags_description": "Click a tag button to apply or remove it from this ticket.",
 }
 
 

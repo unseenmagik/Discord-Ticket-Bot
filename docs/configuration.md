@@ -46,6 +46,8 @@ Key options:
 
 `hidden_thread_tag_names` is a comma-separated list of managed tag names that should not appear in the ticket thread's Quick Tags buttons when a ticket is opened. Those tags still remain available in slash commands and the dashboard.
 
+The tag selector message text itself is managed from the dashboard Admin page under `Welcome Tags`.
+
 ## Transcript settings
 
 In `[logs]`:

@@ -20,6 +20,7 @@
         <button class="admin-tab-button" type="button" data-tab-target="tags">Tags</button>
         <button class="admin-tab-button" type="button" data-tab-target="ticket-setup-panel">Ticket Setup Panel</button>
         <button class="admin-tab-button" type="button" data-tab-target="ticket-welcome-message">Ticket Welcome Message</button>
+        <button class="admin-tab-button" type="button" data-tab-target="welcome-tags">Welcome Tags</button>
     </div>
 
     <div id="managed-access" class="admin-tab-panel is-active">
@@ -239,6 +240,8 @@
             <form class="admin-form-stack" method="post" action="/admin/messages">
                 <input name="thread_embed_title" type="hidden" value="{{ templates.thread_embed_title }}">
                 <input name="thread_embed_description" type="hidden" value="{{ templates.thread_embed_description }}">
+                <input name="thread_tags_title" type="hidden" value="{{ templates.thread_tags_title }}">
+                <input name="thread_tags_description" type="hidden" value="{{ templates.thread_tags_description }}">
 
                 <label for="panel_title">Panel title</label>
                 <input id="panel_title" name="panel_title" type="text" value="{{ templates.panel_title }}" required>
@@ -264,6 +267,8 @@
             <form class="admin-form-stack" method="post" action="/admin/messages">
                 <input name="panel_title" type="hidden" value="{{ templates.panel_title }}">
                 <input name="panel_description" type="hidden" value="{{ templates.panel_description }}">
+                <input name="thread_tags_title" type="hidden" value="{{ templates.thread_tags_title }}">
+                <input name="thread_tags_description" type="hidden" value="{{ templates.thread_tags_description }}">
 
                 <label for="thread_embed_title">Thread message title</label>
                 <input id="thread_embed_title" name="thread_embed_title" type="text" value="{{ templates.thread_embed_title }}" required>
@@ -274,6 +279,33 @@
 
                 <div class="button-row">
                     <button type="submit">Save welcome message</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="welcome-tags" class="admin-tab-panel">
+        <div class="card admin-panel-stack">
+            <div>
+                <h2>Welcome Tags</h2>
+                <p class="muted">Configure the tag selector message that appears in the ticket thread after the welcome message.</p>
+            </div>
+
+            <form class="admin-form-stack" method="post" action="/admin/messages">
+                <input name="panel_title" type="hidden" value="{{ templates.panel_title }}">
+                <input name="panel_description" type="hidden" value="{{ templates.panel_description }}">
+                <input name="thread_embed_title" type="hidden" value="{{ templates.thread_embed_title }}">
+                <input name="thread_embed_description" type="hidden" value="{{ templates.thread_embed_description }}">
+
+                <label for="thread_tags_title">Tag message title</label>
+                <input id="thread_tags_title" name="thread_tags_title" type="text" value="{{ templates.thread_tags_title }}" required>
+
+                <label for="thread_tags_description">Tag message description</label>
+                <textarea id="thread_tags_description" name="thread_tags_description" required>{{ templates.thread_tags_description }}</textarea>
+                <div class="help">The bot will still append the current selected tags and tag count details below this message automatically.</div>
+
+                <div class="button-row">
+                    <button type="submit">Save tag welcome message</button>
                 </div>
             </form>
         </div>

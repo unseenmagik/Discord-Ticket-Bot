@@ -564,6 +564,8 @@ def create_app() -> FastAPI:
         panel_description: str = Form(...),
         thread_embed_title: str = Form(...),
         thread_embed_description: str = Form(...),
+        thread_tags_title: str = Form(...),
+        thread_tags_description: str = Form(...),
         viewer: DashboardViewer = Depends(require_admin),
     ):
         db: DashboardDatabase = request.app.state.db
@@ -573,6 +575,9 @@ def create_app() -> FastAPI:
             "thread_embed_title": thread_embed_title.strip() or DEFAULT_MESSAGE_TEMPLATES["thread_embed_title"],
             "thread_embed_description": thread_embed_description.strip()
             or DEFAULT_MESSAGE_TEMPLATES["thread_embed_description"],
+            "thread_tags_title": thread_tags_title.strip() or DEFAULT_MESSAGE_TEMPLATES["thread_tags_title"],
+            "thread_tags_description": thread_tags_description.strip()
+            or DEFAULT_MESSAGE_TEMPLATES["thread_tags_description"],
         }
         db.set_message_templates(values)
         return RedirectResponse(url="/admin?saved=1", status_code=303)

@@ -167,7 +167,8 @@ class TicketsCog(commands.Cog):
         active_tag_ids = {int(tag["id"]) for tag in active_tags}
         shown_tags = visible_tag_definitions[:25]
         selected_names = [str(tag["tag_name"]) for tag in shown_tags if int(tag["id"]) in active_tag_ids]
-        description = "Click a tag button to apply or remove it from this ticket."
+        templates = await self._get_message_templates()
+        description = templates["thread_tags_description"]
         if selected_names:
             description += "\n\nSelected: " + ", ".join(selected_names)
         else:
@@ -175,7 +176,7 @@ class TicketsCog(commands.Cog):
         if len(visible_tag_definitions) > len(shown_tags):
             description += f"\n\nShowing the first {len(shown_tags)} tags."
 
-        embed = self._embed("Quick Tags", description)
+        embed = self._embed(templates["thread_tags_title"], description)
         view = ThreadTagButtonsView(
             self.bot,
             thread_id=thread_id,

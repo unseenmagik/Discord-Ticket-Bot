@@ -54,6 +54,7 @@ The Admin page is organized into tabs:
 - Tags
 - Ticket Setup Panel
 - Ticket Welcome Message
+- Welcome Tags
 
 Admins can:
 
@@ -62,6 +63,7 @@ Admins can:
 - create, edit, and delete managed tags
 - update the public ticket panel message
 - update the ticket welcome message sent into new threads
+- update the quick-tag selector message shown in new ticket threads
 
 ![Admin Control Panel](images/dashboard-admin-control-panel.png)
 
