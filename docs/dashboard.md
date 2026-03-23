@@ -41,6 +41,8 @@ That includes:
 - assigned-user thread membership sync
 - tag add and remove notices
 
+The in-thread Quick Tags buttons can also hide specific managed tags using `[tickets] hidden_thread_tag_names` in `config.ini`, while still leaving those tags available in slash commands and the dashboard.
+
 ![Ticket detail view](images/dashboard-ticket-detail.png)
 
 ## Admin Control Panel

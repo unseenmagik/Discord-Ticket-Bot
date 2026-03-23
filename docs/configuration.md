@@ -41,7 +41,10 @@ Key options:
 - `allow_thread_owner_reopen`
 - `close_requires_staff`
 - `interaction_delete_after_seconds`
+- `hidden_thread_tag_names`
 - `embed_color`
+
+`hidden_thread_tag_names` is a comma-separated list of managed tag names that should not appear in the ticket thread's Quick Tags buttons when a ticket is opened. Those tags still remain available in slash commands and the dashboard.
 
 ## Transcript settings
 

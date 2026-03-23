@@ -19,6 +19,7 @@ class BotSettings:
     allow_thread_owner_reopen: bool
     close_requires_staff: bool
     interaction_delete_after_seconds: float
+    hidden_thread_tag_names: list[str]
     embed_color: int
     support_role_ids: list[int]
     save_txt_transcript: bool
@@ -51,6 +52,10 @@ def _parse_bool(config: ConfigParser, section: str, key: str, fallback: bool) ->
 
 def _parse_int_list(raw: str) -> list[int]:
     return [int(item.strip()) for item in raw.split(",") if item.strip()]
+
+
+def _parse_str_list(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _parse_role_channel_access(config: ConfigParser, section: str) -> tuple[dict[int, list[int]], list[int]]:
@@ -96,6 +101,9 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
     allow_thread_owner_reopen = _parse_bool(config, "tickets", "allow_thread_owner_reopen", True)
     close_requires_staff = _parse_bool(config, "tickets", "close_requires_staff", False)
     interaction_delete_after_seconds = config.getfloat("tickets", "interaction_delete_after_seconds", fallback=30.0)
+    hidden_thread_tag_names = _parse_str_list(
+        config.get("tickets", "hidden_thread_tag_names", fallback="")
+    )
 
     embed_color_raw = config.get("tickets", "embed_color", fallback="0x5865F2")
     embed_color = int(embed_color_raw, 16) if embed_color_raw.lower().startswith("0x") else int(embed_color_raw)
@@ -150,6 +158,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         allow_thread_owner_reopen=allow_thread_owner_reopen,
         close_requires_staff=close_requires_staff,
         interaction_delete_after_seconds=interaction_delete_after_seconds,
+        hidden_thread_tag_names=hidden_thread_tag_names,
         embed_color=embed_color,
         support_role_ids=support_role_ids,
         save_txt_transcript=save_txt_transcript,
