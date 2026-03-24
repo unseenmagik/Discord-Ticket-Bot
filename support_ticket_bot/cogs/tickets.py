@@ -308,6 +308,68 @@ class TicketsCog(commands.Cog):
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
             return None
 
+    def _extract_thread_member_user_id(self, member: object) -> int | None:
+        for attr_name in ("id", "user_id"):
+            value = getattr(member, attr_name, None)
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    async def _collect_thread_member_user_ids(self, thread: discord.Thread) -> set[int]:
+        user_ids: set[int] = set()
+
+        cached_members = getattr(thread, "members", None) or []
+        for member in cached_members:
+            user_id = self._extract_thread_member_user_id(member)
+            if user_id is not None:
+                user_ids.add(user_id)
+
+        fetch_members = getattr(thread, "fetch_members", None)
+        if callable(fetch_members):
+            try:
+                fetched_members = fetch_members()
+                if hasattr(fetched_members, "__aiter__"):
+                    async for member in fetched_members:
+                        user_id = self._extract_thread_member_user_id(member)
+                        if user_id is not None:
+                            user_ids.add(user_id)
+                else:
+                    resolved_members = await fetched_members if asyncio.iscoroutine(fetched_members) else fetched_members
+                    for member in resolved_members or []:
+                        user_id = self._extract_thread_member_user_id(member)
+                        if user_id is not None:
+                            user_ids.add(user_id)
+            except (discord.Forbidden, discord.HTTPException, TypeError):
+                log.warning("Could not fetch thread members for transcript DM recipients thread_id=%s", thread.id)
+
+        return user_ids
+
+    async def _collect_transcript_recipient_ids(self, thread: discord.Thread, ticket: dict) -> set[int]:
+        recipient_ids: set[int] = set()
+
+        opener_id = ticket.get("opener_id")
+        if opener_id is not None:
+            try:
+                recipient_ids.add(int(opener_id))
+            except (TypeError, ValueError):
+                pass
+
+        recipient_ids.update(await self._collect_thread_member_user_ids(thread))
+
+        async for message in thread.history(limit=None, oldest_first=True):
+            author = message.author
+            if author is not None and not getattr(author, "bot", False):
+                recipient_ids.add(author.id)
+
+        if self.bot.user is not None:
+            recipient_ids.discard(self.bot.user.id)
+
+        return recipient_ids
+
     async def _sync_dashboard_access_directory_once(self) -> None:
         guild = self.bot.get_guild(self.bot.settings.guild_id)
         if guild is None:
@@ -398,17 +460,12 @@ class TicketsCog(commands.Cog):
                 opener_id,
             )
 
-    async def _send_transcript_dm(self, ticket: dict, transcript_url: str | None) -> None:
+    async def _send_transcript_dm(self, thread: discord.Thread, ticket: dict, transcript_url: str | None) -> None:
         if not transcript_url:
             return
 
-        opener_id = ticket.get("opener_id")
-        if not opener_id:
-            return
-
-        user = await self._resolve_ticket_user(opener_id)
-        if user is None:
-            log.warning("Could not resolve ticket opener for transcript DM opener_id=%s", opener_id)
+        recipient_ids = await self._collect_transcript_recipient_ids(thread, ticket)
+        if not recipient_ids:
             return
 
         embed = self._embed(
@@ -421,14 +478,33 @@ class TicketsCog(commands.Cog):
         embed.add_field(name="Transcript", value=f"[Open Transcript]({transcript_url})", inline=False)
         embed.set_footer(text="If prompted, sign in to the dashboard with Discord to open it.")
 
-        try:
-            await user.send(embed=embed)
-        except (discord.Forbidden, discord.HTTPException):
-            log.warning(
-                "Failed to send transcript DM for thread_id=%s opener_id=%s",
-                ticket.get("thread_id"),
-                opener_id,
-            )
+        delivered_count = 0
+        for user_id in sorted(recipient_ids):
+            user = await self._resolve_ticket_user(user_id)
+            if user is None:
+                log.warning(
+                    "Could not resolve transcript DM recipient user_id=%s thread_id=%s",
+                    user_id,
+                    ticket.get("thread_id"),
+                )
+                continue
+
+            try:
+                await user.send(embed=embed)
+                delivered_count += 1
+            except (discord.Forbidden, discord.HTTPException):
+                log.warning(
+                    "Failed to send transcript DM for thread_id=%s recipient_user_id=%s",
+                    ticket.get("thread_id"),
+                    user_id,
+                )
+
+        log.info(
+            "Transcript DM delivery attempted thread_id=%s recipient_count=%s delivered_count=%s",
+            ticket.get("thread_id"),
+            len(recipient_ids),
+            delivered_count,
+        )
 
     async def _send_ticket_reopened_dm(self, ticket: dict, thread: discord.Thread) -> None:
         opener_id = ticket.get("opener_id")
@@ -977,7 +1053,7 @@ class TicketsCog(commands.Cog):
             log_message_id=log_message_id,
             transcript_message_url=transcript_message_url,
         )
-        await self._send_transcript_dm(ticket, transcript_message_url)
+        await self._send_transcript_dm(thread, ticket, transcript_message_url)
         await self._send_thread_notice(
             thread,
             title="Ticket Closed",
