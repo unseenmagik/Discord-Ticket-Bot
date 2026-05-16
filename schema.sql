@@ -120,3 +120,21 @@ CREATE TABLE IF NOT EXISTS guild_role_directory (
     PRIMARY KEY (guild_id, role_id),
     INDEX idx_guild_role_directory_updated (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS external_ticket_requests (
+    request_id CHAR(36) PRIMARY KEY,
+    idempotency_key VARCHAR(120) NULL,
+    external_caller VARCHAR(64) NOT NULL,
+    server_label VARCHAR(255) NOT NULL,
+    opener_id BIGINT NOT NULL,
+    opener_name VARCHAR(255) NULL,
+    title VARCHAR(255) NOT NULL,
+    body MEDIUMTEXT NOT NULL,
+    status ENUM('queued','processing','created','failed') NOT NULL DEFAULT 'queued',
+    created_thread_id BIGINT NULL,
+    error_message TEXT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    UNIQUE KEY uq_external_idem (external_caller, idempotency_key),
+    INDEX idx_external_ticket_requests_status_created (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

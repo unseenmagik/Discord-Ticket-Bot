@@ -283,6 +283,27 @@ def _log_dashboard_audit_event(
     )
 
 
+def _log_external_audit_event(
+    request: Request,
+    *,
+    actor_discord_user_id: int,
+    actor_display_name: str,
+    event_type: str,
+    ticket_thread_id: int | None = None,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    db: DashboardDatabase = request.app.state.db
+    db.add_audit_event(
+        event_type=event_type,
+        actor_discord_user_id=actor_discord_user_id,
+        actor_username=actor_display_name,
+        actor_display_name=actor_display_name,
+        ticket_thread_id=ticket_thread_id,
+        metadata=metadata,
+        created_at=utc_now_iso(),
+    )
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -363,6 +384,7 @@ async def lifespan(app: FastAPI):
     app.state.db.ensure_thread_member_sync_queue_table()
     app.state.db.ensure_guild_directory_tables()
     app.state.db.ensure_ticket_schema_updates()
+    app.state.db.ensure_external_ticket_requests_table()
     yield
 
 
@@ -1110,5 +1132,10 @@ def create_app() -> FastAPI:
             metadata={"status": ticket.get("status"), "server_label": ticket.get("server_label")},
         )
         return HTMLResponse(content=transcript_path.read_text(encoding="utf-8"))
+
+    if load_settings().api_enabled:
+        from .api import router as external_api_router
+
+        app.include_router(external_api_router)
 
     return app

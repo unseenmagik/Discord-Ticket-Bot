@@ -46,6 +46,15 @@ discord_client_secret = YOUR_DISCORD_APPLICATION_CLIENT_SECRET
 discord_redirect_uri = http://127.0.0.1:8000/auth/discord/callback
 admin_user_ids = 123456789012345678
 
+[api]
+# Enable the external HTTP API. When false, all /api/* routes return 404.
+enabled = false
+# Shared bearer token. Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Callers must send: Authorization: Bearer <this value>
+token = REPLACE_ME
+# Free-text label recorded in audit logs when a request omits caller_label.
+default_caller_label = external
+
 [servers]
 Survival Server = 111111111111111111
 Skyblock Server = 222222222222222222

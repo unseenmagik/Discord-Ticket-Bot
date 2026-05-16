@@ -122,6 +122,26 @@ CREATE TABLE IF NOT EXISTS guild_role_directory (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 GUILD_ROLE_DIRECTORY_TABLE_NAME = "guild_role_directory"
+EXTERNAL_TICKET_REQUESTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS external_ticket_requests (
+    request_id CHAR(36) PRIMARY KEY,
+    idempotency_key VARCHAR(120) NULL,
+    external_caller VARCHAR(64) NOT NULL,
+    server_label VARCHAR(255) NOT NULL,
+    opener_id BIGINT NOT NULL,
+    opener_name VARCHAR(255) NULL,
+    title VARCHAR(255) NOT NULL,
+    body MEDIUMTEXT NOT NULL,
+    status ENUM('queued','processing','created','failed') NOT NULL DEFAULT 'queued',
+    created_thread_id BIGINT NULL,
+    error_message TEXT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    UNIQUE KEY uq_external_idem (external_caller, idempotency_key),
+    INDEX idx_external_ticket_requests_status_created (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+EXTERNAL_TICKET_REQUESTS_TABLE_NAME = "external_ticket_requests"
 DEFAULT_TAG_COLOR = "#2563eb"
 DEFAULT_TAG_DISCORD_STYLE = "primary"
 ALLOWED_TAG_DISCORD_STYLES = {"primary", "secondary", "success", "danger"}
@@ -300,6 +320,8 @@ class TicketDatabase:
             await self.execute(GUILD_MEMBER_DIRECTORY_TABLE_SQL)
         if not await self._table_exists(GUILD_ROLE_DIRECTORY_TABLE_NAME):
             await self.execute(GUILD_ROLE_DIRECTORY_TABLE_SQL)
+        if not await self._table_exists(EXTERNAL_TICKET_REQUESTS_TABLE_NAME):
+            await self.execute(EXTERNAL_TICKET_REQUESTS_TABLE_SQL)
         await self._ensure_ticket_schema_updates()
 
     async def close(self) -> None:
@@ -637,6 +659,66 @@ class TicketDatabase:
             (processed_at, sync_id),
         )
 
+    async def list_queued_external_ticket_requests(self, *, limit: int = 5) -> list[dict[str, Any]]:
+        return await self.fetchall(
+            """
+            SELECT *
+            FROM external_ticket_requests
+            WHERE status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+
+    async def claim_external_ticket_request(self, *, request_id: str, updated_at: str) -> bool:
+        rowcount = await self.execute(
+            """
+            UPDATE external_ticket_requests
+            SET status = 'processing', updated_at = %s
+            WHERE request_id = %s AND status = 'queued'
+            """,
+            (updated_at, request_id),
+        )
+        return rowcount > 0
+
+    async def mark_external_ticket_request_created(
+        self,
+        *,
+        request_id: str,
+        created_thread_id: int,
+        updated_at: str,
+    ) -> None:
+        await self.execute(
+            """
+            UPDATE external_ticket_requests
+            SET status = 'created',
+                created_thread_id = %s,
+                error_message = NULL,
+                updated_at = %s
+            WHERE request_id = %s
+            """,
+            (created_thread_id, updated_at, request_id),
+        )
+
+    async def mark_external_ticket_request_failed(
+        self,
+        *,
+        request_id: str,
+        error_message: str,
+        updated_at: str,
+    ) -> None:
+        await self.execute(
+            """
+            UPDATE external_ticket_requests
+            SET status = 'failed',
+                error_message = %s,
+                updated_at = %s
+            WHERE request_id = %s
+            """,
+            (error_message[:65535], updated_at, request_id),
+        )
+
     async def list_tag_definitions(self) -> list[dict[str, Any]]:
         return await self.fetchall("SELECT * FROM ticket_tags ORDER BY tag_name ASC, id ASC")
 
@@ -931,6 +1013,13 @@ class DashboardDatabase:
                     cur.execute(GUILD_MEMBER_DIRECTORY_TABLE_SQL)
                 if not self._table_exists(GUILD_ROLE_DIRECTORY_TABLE_NAME):
                     cur.execute(GUILD_ROLE_DIRECTORY_TABLE_SQL)
+
+    def ensure_external_ticket_requests_table(self) -> None:
+        if self._table_exists(EXTERNAL_TICKET_REQUESTS_TABLE_NAME):
+            return
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(EXTERNAL_TICKET_REQUESTS_TABLE_SQL)
 
     def _table_exists(self, table_name: str) -> bool:
         with self._connect() as conn:
@@ -1583,6 +1672,84 @@ class DashboardDatabase:
                     """,
                     (thread_id, discord_user_id, action, created_at),
                 )
+
+    def find_external_ticket_request_by_idempotency(
+        self,
+        *,
+        external_caller: str,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        self.ensure_external_ticket_requests_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM external_ticket_requests
+                    WHERE external_caller = %s AND idempotency_key = %s
+                    LIMIT 1
+                    """,
+                    (external_caller, idempotency_key),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def insert_external_ticket_request(
+        self,
+        *,
+        request_id: str,
+        idempotency_key: str | None,
+        external_caller: str,
+        server_label: str,
+        opener_id: int,
+        opener_name: str | None,
+        title: str,
+        body: str,
+        created_at: str,
+    ) -> None:
+        self.ensure_external_ticket_requests_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO external_ticket_requests (
+                        request_id,
+                        idempotency_key,
+                        external_caller,
+                        server_label,
+                        opener_id,
+                        opener_name,
+                        title,
+                        body,
+                        status,
+                        created_at,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued', %s, %s)
+                    """,
+                    (
+                        request_id,
+                        idempotency_key,
+                        external_caller,
+                        server_label,
+                        opener_id,
+                        opener_name,
+                        title,
+                        body,
+                        created_at,
+                        created_at,
+                    ),
+                )
+
+    def get_external_ticket_request(self, request_id: str) -> dict[str, Any] | None:
+        self.ensure_external_ticket_requests_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM external_ticket_requests WHERE request_id = %s",
+                    (request_id,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
 
     def count_audit_events(self) -> int:
         self.ensure_dashboard_audit_table()

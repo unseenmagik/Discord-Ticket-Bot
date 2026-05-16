@@ -34,6 +34,8 @@ class TicketsCog(commands.Cog):
         self.dispatch_dashboard_thread_notices.start()
         self.sync_dashboard_thread_members.start()
         self.sync_dashboard_access_directory.start()
+        if getattr(bot.settings, "api_enabled", False):
+            self.dispatch_external_ticket_requests.start()
 
     async def cog_load(self) -> None:
         await self.register_persistent_views()
@@ -43,6 +45,8 @@ class TicketsCog(commands.Cog):
         self.dispatch_dashboard_thread_notices.cancel()
         self.sync_dashboard_thread_members.cancel()
         self.sync_dashboard_access_directory.cancel()
+        if self.dispatch_external_ticket_requests.is_running():
+            self.dispatch_external_ticket_requests.cancel()
 
     async def register_persistent_views(self) -> None:
         self.bot.add_view(TicketPanelView(self.bot))
@@ -879,10 +883,40 @@ class TicketsCog(commands.Cog):
         except discord.HTTPException:
             log.warning("Failed to defer ticket creation interaction for user_id=%s", interaction.user.id)
 
-        seed_message = await target_channel.send(f"New ticket request from {interaction.user.mention} for **{chosen_label}**")
+        try:
+            thread = await self._create_ticket_thread(
+                guild=interaction.guild,
+                opener=interaction.user,
+                server_label=chosen_label,
+                target_channel=target_channel,
+            )
+        except discord.Forbidden:
+            await self._reply(interaction, "I do not have permission to create threads there.")
+            return
+        except discord.HTTPException as exc:
+            await self._reply(interaction, f"Failed to create ticket thread: {exc}")
+            return
+
+        await self._reply(interaction, f"Your ticket has been created: {thread.mention}")
+
+    async def _create_ticket_thread(
+        self,
+        *,
+        guild: discord.Guild,
+        opener: discord.Member,
+        server_label: str,
+        target_channel: discord.TextChannel,
+        embed_title_override: str | None = None,
+        embed_description_override: str | None = None,
+    ) -> discord.Thread:
+        settings = self.bot.settings
+
+        seed_message = await target_channel.send(
+            f"New ticket request from {opener.mention} for **{server_label}**"
+        )
         thread_name_prefix = (
-            f"{settings.thread_name_prefix}-{clean_slug(chosen_label, 30)}-"
-            f"{clean_slug(interaction.user.name, 30)}"
+            f"{settings.thread_name_prefix}-{clean_slug(server_label, 30)}-"
+            f"{clean_slug(opener.name, 30)}"
         )
         thread_name = thread_name_prefix[:100]
 
@@ -890,16 +924,11 @@ class TicketsCog(commands.Cog):
             thread = await seed_message.create_thread(
                 name=thread_name,
                 auto_archive_duration=settings.auto_archive_duration,
-                reason=f"Support ticket opened by {interaction.user} for {chosen_label}",
+                reason=f"Support ticket opened by {opener} for {server_label}",
             )
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException):
             await self._delete_message_quietly(seed_message, context="thread creation cleanup")
-            await self._reply(interaction, "I do not have permission to create threads there.")
-            return
-        except discord.HTTPException as exc:
-            await self._delete_message_quietly(seed_message, context="thread creation cleanup")
-            await self._reply(interaction, f"Failed to create ticket thread: {exc}")
-            return
+            raise
 
         final_thread_name = f"{thread_name_prefix}-{thread.id}"[:100]
         if thread.name != final_thread_name:
@@ -909,16 +938,16 @@ class TicketsCog(commands.Cog):
                 log.warning("Failed to rename ticket thread thread_id=%s final_name=%s", thread.id, final_thread_name)
 
         try:
-            await thread.add_user(interaction.user)
+            await thread.add_user(opener)
         except discord.HTTPException:
             pass
 
         await self.bot.db.create_ticket(
             thread_id=thread.id,
-            guild_id=interaction.guild.id,
-            opener_id=interaction.user.id,
-            opener_name=str(interaction.user),
-            server_label=chosen_label,
+            guild_id=guild.id,
+            opener_id=opener.id,
+            opener_name=str(opener),
+            server_label=server_label,
             target_channel_id=target_channel.id,
             seed_message_id=seed_message.id,
             created_at=utc_now_iso(),
@@ -926,43 +955,50 @@ class TicketsCog(commands.Cog):
 
         mentions = " ".join(f"<@&{role_id}>" for role_id in settings.support_role_ids)
         templates = await self._get_message_templates()
-        embed = self._embed(
-            render_template(
+        if embed_title_override is not None:
+            embed_title = embed_title_override
+        else:
+            embed_title = render_template(
                 templates["thread_embed_title"],
-                guild_name=interaction.guild.name,
-                server_label=chosen_label,
-                user_mention=interaction.user.mention,
-                user_name=interaction.user.display_name,
+                guild_name=guild.name,
+                server_label=server_label,
+                user_mention=opener.mention,
+                user_name=opener.display_name,
                 thread_id=thread.id,
-            ),
-            render_template(
+            )
+        if embed_description_override is not None:
+            embed_description = embed_description_override
+            if len(embed_description) > 4096:
+                embed_description = embed_description[:4093] + "..."
+        else:
+            embed_description = render_template(
                 templates["thread_embed_description"],
-                guild_name=interaction.guild.name,
-                server_label=chosen_label,
-                user_mention=interaction.user.mention,
-                user_name=interaction.user.display_name,
+                guild_name=guild.name,
+                server_label=server_label,
+                user_mention=opener.mention,
+                user_name=opener.display_name,
                 thread_id=thread.id,
-            ),
-        )
+            )
+        embed = self._embed(embed_title, embed_description)
 
         close_view = ThreadCloseView(self.bot, thread.id)
         self.bot.add_view(close_view)
         await thread.send(content=mentions or None, embed=embed, view=close_view)
         await self._sync_thread_tag_selector(thread)
         await self._send_ticket_created_dm(
-            opener_id=interaction.user.id,
+            opener_id=opener.id,
             thread=thread,
-            server_label=chosen_label,
+            server_label=server_label,
         )
         log.info(
             "Ticket opened thread_id=%s guild_id=%s opener_id=%s server_label=%s target_channel_id=%s",
             thread.id,
-            interaction.guild.id,
-            interaction.user.id,
-            chosen_label,
+            guild.id,
+            opener.id,
+            server_label,
             target_channel.id,
         )
-        await self._reply(interaction, f"Your ticket has been created: {thread.mention}")
+        return thread
 
     async def _send_transcript_log(
         self,
@@ -1268,6 +1304,101 @@ class TicketsCog(commands.Cog):
     async def sync_dashboard_access_directory(self) -> None:
         await self._sync_dashboard_access_directory_once()
 
+    @tasks.loop(seconds=5)
+    async def dispatch_external_ticket_requests(self) -> None:
+        try:
+            queued = await self.bot.db.list_queued_external_ticket_requests(limit=5)
+        except Exception:
+            log.exception("Failed to list queued external ticket requests")
+            return
+
+        for row in queued:
+            request_id = str(row["request_id"])
+            claimed = await self.bot.db.claim_external_ticket_request(
+                request_id=request_id,
+                updated_at=utc_now_iso(),
+            )
+            if not claimed:
+                continue
+
+            try:
+                thread = await self._process_external_ticket_request(row)
+            except Exception as exc:
+                log.exception(
+                    "External ticket request failed request_id=%s",
+                    request_id,
+                )
+                await self.bot.db.mark_external_ticket_request_failed(
+                    request_id=request_id,
+                    error_message=f"{type(exc).__name__}: {exc}",
+                    updated_at=utc_now_iso(),
+                )
+                continue
+
+            await self.bot.db.mark_external_ticket_request_created(
+                request_id=request_id,
+                created_thread_id=thread.id,
+                updated_at=utc_now_iso(),
+            )
+            try:
+                await self.bot.db.add_audit_event(
+                    event_type="external_ticket_request_created",
+                    actor_discord_user_id=int(row["opener_id"]),
+                    actor_username=str(row.get("opener_name") or row["external_caller"]),
+                    actor_display_name=str(row.get("opener_name") or row["external_caller"]),
+                    ticket_thread_id=thread.id,
+                    metadata={
+                        "source": "external_api",
+                        "external_caller": str(row["external_caller"]),
+                        "request_id": request_id,
+                        "server_label": str(row["server_label"]),
+                    },
+                    created_at=utc_now_iso(),
+                )
+            except Exception:
+                log.exception(
+                    "Failed to record external_ticket_request_created audit event request_id=%s",
+                    request_id,
+                )
+
+    async def _process_external_ticket_request(self, row: dict[str, Any]) -> discord.Thread:
+        settings = self.bot.settings
+        server_label = str(row["server_label"])
+        channel_id = settings.server_targets.get(server_label)
+        if channel_id is None:
+            raise RuntimeError(f"Unknown server_label '{server_label}'")
+
+        guild = self.bot.get_guild(settings.guild_id)
+        if guild is None:
+            try:
+                guild = await self.bot.fetch_guild(settings.guild_id)
+            except discord.HTTPException as exc:
+                raise RuntimeError(f"Could not resolve guild {settings.guild_id}: {exc}") from exc
+
+        target_channel = guild.get_channel(channel_id)
+        if target_channel is None:
+            try:
+                fetched = await self.bot.fetch_channel(channel_id)
+            except discord.HTTPException as exc:
+                raise RuntimeError(f"Could not resolve channel {channel_id}: {exc}") from exc
+            target_channel = fetched
+        if not isinstance(target_channel, discord.TextChannel):
+            raise RuntimeError(f"Channel {channel_id} is not a text channel")
+
+        opener_id = int(row["opener_id"])
+        opener = await self._resolve_guild_member(guild, opener_id)
+        if opener is None:
+            raise RuntimeError(f"Opener {opener_id} is not a member of guild {guild.id}")
+
+        return await self._create_ticket_thread(
+            guild=guild,
+            opener=opener,
+            server_label=server_label,
+            target_channel=target_channel,
+            embed_title_override=str(row["title"]),
+            embed_description_override=str(row["body"]),
+        )
+
     @cleanup_closed_threads.before_loop
     async def before_cleanup(self) -> None:
         await self.bot.wait_until_ready()
@@ -1282,6 +1413,10 @@ class TicketsCog(commands.Cog):
 
     @sync_dashboard_access_directory.before_loop
     async def before_sync_dashboard_access_directory(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @dispatch_external_ticket_requests.before_loop
+    async def before_dispatch_external_ticket_requests(self) -> None:
         await self.bot.wait_until_ready()
 
     @app_commands.command(name="setup_tickets", description="Post the ticket panel")

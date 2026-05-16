@@ -44,6 +44,9 @@ class BotSettings:
     dashboard_admin_user_ids: list[int]
     dashboard_role_channel_access: dict[int, list[int]]
     dashboard_role_full_access_ids: list[int]
+    api_enabled: bool
+    api_token: str
+    api_default_caller_label: str
 
 
 def _parse_bool(config: ConfigParser, section: str, key: str, fallback: bool) -> bool:
@@ -145,6 +148,10 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         "dashboard_role_access",
     )
 
+    api_enabled = _parse_bool(config, "api", "enabled", False)
+    api_token = config.get("api", "token", fallback="")
+    api_default_caller_label = config.get("api", "default_caller_label", fallback="external")
+
     return BotSettings(
         token=token,
         message_content_intent=message_content_intent,
@@ -183,4 +190,7 @@ def load_settings(config_path: str | Path = "config.ini") -> BotSettings:
         dashboard_admin_user_ids=dashboard_admin_user_ids,
         dashboard_role_channel_access=dashboard_role_channel_access,
         dashboard_role_full_access_ids=dashboard_role_full_access_ids,
+        api_enabled=api_enabled,
+        api_token=api_token,
+        api_default_caller_label=api_default_caller_label,
     )
