@@ -138,3 +138,17 @@ CREATE TABLE IF NOT EXISTS external_ticket_requests (
     UNIQUE KEY uq_external_idem (external_caller, idempotency_key),
     INDEX idx_external_ticket_requests_status_created (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    creator_id BIGINT NOT NULL,
+    creator_display_name VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    scheduled_at VARCHAR(64) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    sent_at VARCHAR(64) NULL,
+    INDEX idx_reminders_pending (sent_at, scheduled_at),
+    INDEX idx_reminders_creator (creator_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

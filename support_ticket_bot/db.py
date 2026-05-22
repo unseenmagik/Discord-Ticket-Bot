@@ -142,6 +142,22 @@ CREATE TABLE IF NOT EXISTS external_ticket_requests (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 EXTERNAL_TICKET_REQUESTS_TABLE_NAME = "external_ticket_requests"
+REMINDERS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS reminders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    creator_id BIGINT NOT NULL,
+    creator_display_name VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    scheduled_at VARCHAR(64) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    sent_at VARCHAR(64) NULL,
+    INDEX idx_reminders_pending (sent_at, scheduled_at),
+    INDEX idx_reminders_creator (creator_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+REMINDERS_TABLE_NAME = "reminders"
 DEFAULT_TAG_COLOR = "#2563eb"
 DEFAULT_TAG_DISCORD_STYLE = "primary"
 ALLOWED_TAG_DISCORD_STYLES = {"primary", "secondary", "success", "danger"}
@@ -322,6 +338,8 @@ class TicketDatabase:
             await self.execute(GUILD_ROLE_DIRECTORY_TABLE_SQL)
         if not await self._table_exists(EXTERNAL_TICKET_REQUESTS_TABLE_NAME):
             await self.execute(EXTERNAL_TICKET_REQUESTS_TABLE_SQL)
+        if not await self._table_exists(REMINDERS_TABLE_NAME):
+            await self.execute(REMINDERS_TABLE_SQL)
         await self._ensure_ticket_schema_updates()
 
     async def close(self) -> None:
@@ -933,6 +951,62 @@ class TicketDatabase:
                 """,
                 (key, value),
             )
+
+    async def create_reminder(
+        self,
+        *,
+        guild_id: int,
+        channel_id: int,
+        creator_id: int,
+        creator_display_name: str,
+        message: str,
+        scheduled_at: str,
+        created_at: str,
+    ) -> int:
+        assert self.pool is not None, "Database pool is not initialized"
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO reminders (
+                        guild_id,
+                        channel_id,
+                        creator_id,
+                        creator_display_name,
+                        message,
+                        scheduled_at,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        guild_id,
+                        channel_id,
+                        creator_id,
+                        creator_display_name,
+                        message,
+                        scheduled_at,
+                        created_at,
+                    ),
+                )
+                return int(cur.lastrowid)
+
+    async def list_due_reminders(self, *, now_iso: str, limit: int = 25) -> list[dict[str, Any]]:
+        return await self.fetchall(
+            """
+            SELECT *
+            FROM reminders
+            WHERE sent_at IS NULL AND scheduled_at <= %s
+            ORDER BY scheduled_at ASC, id ASC
+            LIMIT %s
+            """,
+            (now_iso, limit),
+        )
+
+    async def mark_reminder_sent(self, *, reminder_id: int, sent_at: str) -> None:
+        await self.execute(
+            "UPDATE reminders SET sent_at = %s WHERE id = %s",
+            (sent_at, reminder_id),
+        )
 
 
 class DashboardDatabase:

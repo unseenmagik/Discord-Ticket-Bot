@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 from discord import app_commands
@@ -34,6 +35,7 @@ class TicketsCog(commands.Cog):
         self.dispatch_dashboard_thread_notices.start()
         self.sync_dashboard_thread_members.start()
         self.sync_dashboard_access_directory.start()
+        self.dispatch_reminders.start()
         if getattr(bot.settings, "api_enabled", False):
             self.dispatch_external_ticket_requests.start()
 
@@ -45,6 +47,7 @@ class TicketsCog(commands.Cog):
         self.dispatch_dashboard_thread_notices.cancel()
         self.sync_dashboard_thread_members.cancel()
         self.sync_dashboard_access_directory.cancel()
+        self.dispatch_reminders.cancel()
         if self.dispatch_external_ticket_requests.is_running():
             self.dispatch_external_ticket_requests.cancel()
 
@@ -1304,6 +1307,42 @@ class TicketsCog(commands.Cog):
     async def sync_dashboard_access_directory(self) -> None:
         await self._sync_dashboard_access_directory_once()
 
+    @tasks.loop(seconds=15)
+    async def dispatch_reminders(self) -> None:
+        now_iso = utc_now_iso()
+        reminders = await self.bot.db.list_due_reminders(now_iso=now_iso, limit=25)
+        for reminder in reminders:
+            reminder_id = int(reminder["id"])
+            channel_id = int(reminder["channel_id"])
+            creator_id = int(reminder["creator_id"])
+            message_text = str(reminder["message"])
+
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    log.warning(
+                        "Skipping reminder for unreachable channel reminder_id=%s channel_id=%s",
+                        reminder_id,
+                        channel_id,
+                    )
+                    await self.bot.db.mark_reminder_sent(reminder_id=reminder_id, sent_at=utc_now_iso())
+                    continue
+
+            try:
+                await channel.send(
+                    f"<@{creator_id}> reminder: {message_text}",
+                    allowed_mentions=discord.AllowedMentions(users=True),
+                )
+            except discord.HTTPException:
+                log.exception(
+                    "Failed to deliver reminder reminder_id=%s channel_id=%s",
+                    reminder_id,
+                    channel_id,
+                )
+            await self.bot.db.mark_reminder_sent(reminder_id=reminder_id, sent_at=utc_now_iso())
+
     @tasks.loop(seconds=5)
     async def dispatch_external_ticket_requests(self) -> None:
         try:
@@ -1413,6 +1452,10 @@ class TicketsCog(commands.Cog):
 
     @sync_dashboard_access_directory.before_loop
     async def before_sync_dashboard_access_directory(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @dispatch_reminders.before_loop
+    async def before_dispatch_reminders(self) -> None:
         await self.bot.wait_until_ready()
 
     @dispatch_external_ticket_requests.before_loop
@@ -1768,6 +1811,114 @@ class TicketsCog(commands.Cog):
             interaction.user.id,
         )
         await self._reply(interaction, f"Added {user.mention} to {thread.mention}.")
+
+    @app_commands.command(
+        name="reminder",
+        description="Schedule a reminder in this channel tagging you at the given date/time.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        date="Date in YYYY-MM-DD (e.g. 2026-05-22)",
+        time="Time in HH:MM or HH:MM:SS (24-hour, e.g. 14:30)",
+        message="The reminder text to send",
+        tz="IANA timezone name (e.g. UTC, America/Los_Angeles). Defaults to UTC.",
+    )
+    @app_commands.rename(tz="timezone")
+    async def reminder(
+        self,
+        interaction: discord.Interaction,
+        date: str,
+        time: str,
+        message: str,
+        tz: str = "UTC",
+    ) -> None:
+        if interaction.guild is None or interaction.channel is None:
+            await self._reply(interaction, "This command must be used in a server channel.")
+            return
+
+        if not isinstance(
+            interaction.channel,
+            (discord.TextChannel, discord.Thread, discord.VoiceChannel, discord.StageChannel),
+        ):
+            await self._reply(interaction, "Reminders can only be scheduled in a text channel or thread.")
+            return
+
+        tz_name = (tz or "UTC").strip() or "UTC"
+        try:
+            tzinfo = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            await self._reply(
+                interaction,
+                f"Unknown timezone `{tz_name}`. Use an IANA name like `UTC` or `America/Los_Angeles`.",
+            )
+            return
+
+        try:
+            year, month, day = (int(part) for part in date.strip().split("-"))
+        except (ValueError, AttributeError):
+            await self._reply(interaction, "Invalid date. Use the format `YYYY-MM-DD`, e.g. `2026-05-22`.")
+            return
+
+        time_parts = time.strip().split(":")
+        if len(time_parts) == 2:
+            time_parts.append("0")
+        if len(time_parts) != 3:
+            await self._reply(interaction, "Invalid time. Use `HH:MM` or `HH:MM:SS` in 24-hour format.")
+            return
+        try:
+            hour, minute, second = (int(part) for part in time_parts)
+        except ValueError:
+            await self._reply(interaction, "Invalid time. Use `HH:MM` or `HH:MM:SS` in 24-hour format.")
+            return
+
+        try:
+            local_dt = datetime(year, month, day, hour, minute, second, tzinfo=tzinfo)
+        except ValueError as exc:
+            await self._reply(interaction, f"Invalid date/time: {exc}.")
+            return
+
+        scheduled_utc = local_dt.astimezone(timezone.utc)
+        if scheduled_utc <= datetime.now(timezone.utc):
+            await self._reply(interaction, "The reminder time must be in the future.")
+            return
+
+        clean_message = message.strip()
+        if not clean_message:
+            await self._reply(interaction, "Reminder message cannot be empty.")
+            return
+        if len(clean_message) > 1500:
+            await self._reply(interaction, "Reminder message is too long (max 1500 characters).")
+            return
+
+        creator_display_name = (
+            interaction.user.display_name
+            if isinstance(interaction.user, discord.Member)
+            else interaction.user.name
+        )
+
+        reminder_id = await self.bot.db.create_reminder(
+            guild_id=interaction.guild.id,
+            channel_id=interaction.channel.id,
+            creator_id=interaction.user.id,
+            creator_display_name=creator_display_name,
+            message=clean_message,
+            scheduled_at=scheduled_utc.isoformat(),
+            created_at=utc_now_iso(),
+        )
+
+        unix_ts = int(scheduled_utc.timestamp())
+        log.info(
+            "Reminder scheduled reminder_id=%s guild_id=%s channel_id=%s creator_id=%s scheduled_at=%s",
+            reminder_id,
+            interaction.guild.id,
+            interaction.channel.id,
+            interaction.user.id,
+            scheduled_utc.isoformat(),
+        )
+        await self._reply(
+            interaction,
+            f"Reminder scheduled for <t:{unix_ts}:F> (<t:{unix_ts}:R>).",
+        )
 
 
 async def setup(bot: "SupportTicketBot") -> None:
