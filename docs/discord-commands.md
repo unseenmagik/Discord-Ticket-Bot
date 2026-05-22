@@ -36,6 +36,12 @@ Managed tags are admin-defined and can also be maintained from the dashboard Adm
 
 - `/add_ticket_user`
 
+## Reminders
+
+- `/reminder date:<YYYY-MM-DD> time:<HH:MM[:SS]> message:<text> [timezone:<IANA>]`
+
+Admin-only. Schedules a reminder in the channel or thread the command is invoked from. At the scheduled time the bot posts the message and tags the user who created it. The `timezone` option accepts an IANA name (e.g. `UTC`, `America/Los_Angeles`) and defaults to `UTC`.
+
 ## Permissions
 
 Discord bot permissions:
