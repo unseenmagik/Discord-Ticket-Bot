@@ -1812,11 +1812,16 @@ class TicketsCog(commands.Cog):
         )
         await self._reply(interaction, f"Added {user.mention} to {thread.mention}.")
 
-    @app_commands.command(
+    reminder_group = app_commands.Group(
         name="reminder",
+        description="Schedule and review timed reminders.",
+        default_permissions=discord.Permissions(administrator=True),
+    )
+
+    @reminder_group.command(
+        name="create",
         description="Schedule a reminder in this channel tagging you at the given date/time.",
     )
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         date="Date in YYYY-MM-DD (e.g. 2026-05-22)",
         time="Time in HH:MM or HH:MM:SS (24-hour, e.g. 14:30)",
@@ -1824,7 +1829,7 @@ class TicketsCog(commands.Cog):
         tz="IANA timezone name (e.g. UTC, America/Los_Angeles). Defaults to UTC.",
     )
     @app_commands.rename(tz="timezone")
-    async def reminder(
+    async def reminder_create(
         self,
         interaction: discord.Interaction,
         date: str,
@@ -1919,6 +1924,63 @@ class TicketsCog(commands.Cog):
             interaction,
             f"Reminder scheduled for <t:{unix_ts}:F> (<t:{unix_ts}:R>).",
         )
+
+    @reminder_group.command(
+        name="list",
+        description="List the active (pending) reminders scheduled in this server.",
+    )
+    async def reminder_list(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await self._reply(interaction, "This command must be used in a server.")
+            return
+
+        display_limit = 10
+        reminders = await self.bot.db.list_active_reminders(
+            guild_id=interaction.guild.id,
+            now_iso=utc_now_iso(),
+            limit=display_limit + 1,
+        )
+
+        if not reminders:
+            await self._reply(interaction, "There are no active reminders in this server.")
+            return
+
+        has_more = len(reminders) > display_limit
+        reminders = reminders[:display_limit]
+
+        description = f"{len(reminders)} pending reminder(s) shown, soonest first."
+        if has_more:
+            description += f"\nOnly the next {display_limit} are listed."
+
+        embed = discord.Embed(
+            title="Active reminders",
+            description=description,
+            color=discord.Color.blurple(),
+        )
+        for reminder in reminders:
+            try:
+                scheduled_dt = datetime.fromisoformat(str(reminder["scheduled_at"]))
+            except ValueError:
+                continue
+            unix_ts = int(scheduled_dt.timestamp())
+            message_text = str(reminder["message"])
+            if len(message_text) > 200:
+                message_text = message_text[:197] + "..."
+            embed.add_field(
+                name=f"#{reminder['id']} — <t:{unix_ts}:R>",
+                value=(
+                    f"**When:** <t:{unix_ts}:F>\n"
+                    f"**Channel:** <#{reminder['channel_id']}>\n"
+                    f"**Created by:** <@{reminder['creator_id']}>\n"
+                    f"**Message:** {message_text}"
+                ),
+                inline=False,
+            )
+
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot: "SupportTicketBot") -> None:

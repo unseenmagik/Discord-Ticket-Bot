@@ -1002,6 +1002,20 @@ class TicketDatabase:
             (now_iso, limit),
         )
 
+    async def list_active_reminders(
+        self, *, guild_id: int, now_iso: str, limit: int = 25
+    ) -> list[dict[str, Any]]:
+        return await self.fetchall(
+            """
+            SELECT *
+            FROM reminders
+            WHERE guild_id = %s AND sent_at IS NULL AND scheduled_at > %s
+            ORDER BY scheduled_at ASC, id ASC
+            LIMIT %s
+            """,
+            (guild_id, now_iso, limit),
+        )
+
     async def mark_reminder_sent(self, *, reminder_id: int, sent_at: str) -> None:
         await self.execute(
             "UPDATE reminders SET sent_at = %s WHERE id = %s",

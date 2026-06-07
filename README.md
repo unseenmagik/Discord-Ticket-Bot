@@ -14,7 +14,7 @@ A Discord support ticket bot with a FastAPI dashboard, MariaDB/MySQL storage, HT
 - Staff assignment, internal notes, and managed tags
 - Dashboard actions synced back into Discord by the bot
 - Transcript browsing, stats, audit log, and admin controls
-- Scheduled reminders via `/reminder` with timezone-aware delivery
+- Scheduled reminders via `/reminder create` (timezone-aware) with `/reminder list` to review pending ones
 
 ## Quick Start
 

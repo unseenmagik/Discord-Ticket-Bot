@@ -38,9 +38,12 @@ Managed tags are admin-defined and can also be maintained from the dashboard Adm
 
 ## Reminders
 
-- `/reminder date:<YYYY-MM-DD> time:<HH:MM[:SS]> message:<text> [timezone:<IANA>]`
+- `/reminder create date:<YYYY-MM-DD> time:<HH:MM[:SS]> message:<text> [timezone:<IANA>]`
+- `/reminder list`
 
-Admin-only. Schedules a reminder in the channel or thread the command is invoked from. At the scheduled time the bot posts the message and tags the user who created it. The `timezone` option accepts an IANA name (e.g. `UTC`, `America/Los_Angeles`) and defaults to `UTC`.
+Admin-only. `create` schedules a reminder in the channel or thread the command is invoked from. At the scheduled time the bot posts the message and tags the user who created it. The `timezone` option accepts an IANA name (e.g. `UTC`, `America/Los_Angeles`) and defaults to `UTC`.
+
+`list` replies with an ephemeral embed of the active (pending) reminders scheduled across the server, soonest first, showing each reminder's id, scheduled time, channel, creator, and message. Up to the next 10 reminders are shown.
 
 ## Permissions
 
